@@ -16,6 +16,7 @@ the panel already watches.
 | Gemini | Gemini CLI's Code Assist model quota buckets from `cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota` | Gemini CLI Google sign-in credentials in `~/.gemini/oauth_creds.json`, or an explicit short-lived `GEMINI_ACCESS_TOKEN`; otherwise **Waiting for Gemini sign-in** explains the required Google-login flow |
 | Cursor | personal subscription pools from Cursor dashboard's `GET /api/usage-summary`, using the locally signed-in Cursor IDE or `cursor-agent` session | Cursor IDE/cursor-agent sign-in; otherwise **Waiting for Cursor sign-in** tells the user to sign in locally. Team accounts without a per-user meter report a clear unavailable status rather than an invented percentage |
 | Kimi | weekly Coding Plan quota and any 5-hour rolling window from `GET /coding/v1/usages` | `KIMI_API_KEY` or `collectors.json` entry; otherwise **Waiting for API key** gives the exact setup path |
+| OpenCode Go | local session/token stats from opencode's own SQLite store, plus the authoritative rolling/weekly/monthly allowances from Zen's `GET /zen/go/v1/usage` | `opencode auth login` sign-in read from `~/.local/share/opencode/auth.json`; otherwise **Waiting for auth** — local stats still show without it |
 | Claude Code | existing local transcript collector, decorated with published API pricing | no new credential; the base Claude collector retains its own sign-in state |
 | Codex | existing local transcript collector, decorated with published API pricing | no new credential; the base Codex collector retains its own sign-in state |
 
@@ -37,7 +38,7 @@ From a clone of this repository:
 ```
 
 The runner atomically writes `openrouter.json`, `deepseek.json`, `xai.json`,
-`zai.json`, `gemini.json`, `cursor.json`, and `kimi.json` under
+`zai.json`, `gemini.json`, `cursor.json`, `kimi.json`, and `opencode-go.json` under
 `$XDG_STATE_HOME/omarchy/agents/usage` (default
 `~/.local/state/omarchy/agents/usage`). Run either collector directly when
 you want to inspect only its JSON output:
