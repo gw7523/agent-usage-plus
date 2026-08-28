@@ -14,6 +14,13 @@ into this project's dark/light variant convention; Gemini and OpenRouter use
 Simple Icons' documented brand color, the others this project's existing
 white/`#111111` scheme.
 
+`opencode-go.svg`/`opencode-go-light.svg` use the OpenCode logo from the
+official OpenCode brand assets, recolored into this project's dark/light
+variant convention (near-white `#F1ECEC` on dark surfaces, near-black
+`#211E1E` on light). The mask/clip definitions in the source export were
+no-ops over the full viewBox and have been removed; the mark paths are
+unchanged.
+
 Copyright (c) 2026 Peter Steinberger
 
 Permission is hereby granted, free of charge, to any person obtaining a copy

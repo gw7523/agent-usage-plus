@@ -38,6 +38,7 @@ Icons currently shipped:
 | `kimi` | `kimi.svg`, `kimi-light.svg` |
 | `xai` | `xai.svg`, `xai-light.svg` |
 | `zai` | `zai.svg`, `zai-light.svg` |
+| `opencode-go` | `opencode-go.svg`, `opencode-go-light.svg` |
 
 All currently supported providers have a registered mark. A future provider
 can still use the text-initial fallback, but its asset and exact registry

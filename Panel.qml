@@ -656,7 +656,8 @@ Panel {
     cursor: { defaultAsset: "cursor.svg", lightAsset: "cursor-light.svg" },
     kimi: { defaultAsset: "kimi.svg", lightAsset: "kimi-light.svg" },
     xai: { defaultAsset: "xai.svg", lightAsset: "xai-light.svg" },
-    zai: { defaultAsset: "zai.svg", lightAsset: "zai-light.svg" }
+    zai: { defaultAsset: "zai.svg", lightAsset: "zai-light.svg" },
+    "opencode-go": { defaultAsset: "opencode-go.svg", lightAsset: "opencode-go-light.svg" }
   })
 
   // Known marks resolve through the registry above; everything else falls

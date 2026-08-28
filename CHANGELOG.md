@@ -4,10 +4,15 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
-## [2.1.0] - 2026-08-25
+## [2.1.0] - 2026-08-28
 
 ### Added
 
+- OpenCode Go collector (`collectors/agent_usage_collectors/opencode_go.py`): reads
+  local session/token stats from opencode's own SQLite store and the
+  authoritative rolling/weekly/monthly allowances from Zen's usage endpoint,
+  matching the shape of Omarchy's own local-plus-remote collectors
+  (Claude/Codex) rather than the API-only companion collectors.
 - Optional collector automation is available again through `collectors/install.sh`:
   a user-level systemd timer can refresh configured API collectors, optional
   Omarchy command-path links can be created, and transcript-derived cost

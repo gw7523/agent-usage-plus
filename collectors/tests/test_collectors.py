@@ -7,12 +7,15 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from unittest.mock import patch
 
-from agent_usage_collectors import cursor, deepseek, gemini, kimi, openrouter, xai
+from agent_usage_collectors import cursor, deepseek, gemini, kimi, opencode_go, openrouter, xai
 from agent_usage_collectors.common import MAX_RESPONSE_BYTES, base_record, classify_failure, endpoint_problem, request_json
 from agent_usage_collectors.deepseek import record_from_payload as deepseek_record
 from agent_usage_collectors.cursor import record_from_payload as cursor_record
 from agent_usage_collectors.gemini import record_from_payload as gemini_record
 from agent_usage_collectors.kimi import record_from_payload as kimi_record
+from agent_usage_collectors.opencode_go import collect as collect_opencode_go
+from agent_usage_collectors.opencode_go import limit_window as opencode_go_limit_window
+from agent_usage_collectors.opencode_go import stats_from_rows as opencode_go_stats_from_rows
 from agent_usage_collectors.openrouter import record_from_payload as openrouter_record
 from agent_usage_collectors.transcript_cost import decorate, normalise_today_buckets
 from agent_usage_collectors.xai import record_from_payload as xai_record
@@ -306,6 +309,93 @@ class CollectorParsingTests(unittest.TestCase):
                 "cacheCreationInputTokens": 0,
             },
         })
+
+
+class OpenCodeGoCollectorTests(unittest.TestCase):
+    def test_stats_from_rows_aggregates_today_and_all_time(self) -> None:
+        today_ms = int(_utc_midnight_ms(days_ago=0))
+        yesterday_ms = int(_utc_midnight_ms(days_ago=1))
+        rows = [
+            ("session-1", today_ms, "claude-sonnet-5", 100, 50, 10, 0),
+            ("session-1", today_ms, "claude-sonnet-5", 20, 5, 0, 0),
+            ("session-2", yesterday_ms, "gpt-5", 200, 100, 0, 0),
+        ]
+        stats = opencode_go_stats_from_rows(rows)
+        self.assertEqual(stats["todayPrompts"], 2)
+        self.assertEqual(stats["todaySessions"], 1)
+        self.assertEqual(stats["todayTotalTokens"], 185)
+        self.assertEqual(stats["totalPrompts"], 3)
+        self.assertEqual(stats["totalSessions"], 2)
+        self.assertEqual(stats["activeDays"], 2)
+        self.assertEqual(
+            stats["modelUsage"]["claude-sonnet-5"],
+            {"inputTokens": 120, "outputTokens": 55, "cacheReadInputTokens": 10, "cacheCreationInputTokens": 0},
+        )
+        self.assertEqual(len(stats["recentDays"]), 7)
+        self.assertEqual(stats["recentDays"][-1]["messageCount"], 185)
+
+    def test_stats_from_rows_empty_is_a_valid_zero_state(self) -> None:
+        stats = opencode_go_stats_from_rows([])
+        self.assertEqual(stats["totalPrompts"], 0)
+        self.assertEqual(stats["recentDays"], [])
+
+    def test_limit_window_scales_percent_from_0_100_to_0_1(self) -> None:
+        window = opencode_go_limit_window({"rolling": {"percent": 42, "resetsAt": "2026-08-23T18:00:00+00:00"}}, "rolling", "Session")
+        self.assertEqual(window["percent"], 0.42)
+        self.assertEqual(window["title"], "Session")
+
+    def test_limit_window_rejects_missing_percent(self) -> None:
+        with self.assertRaisesRegex(ValueError, "percent is missing"):
+            opencode_go_limit_window({"rolling": {}}, "rolling", "Session")
+
+    def test_collect_reports_missing_auth_but_keeps_local_stats(self) -> None:
+        stats = {
+            "todayPrompts": 3, "todaySessions": 1, "todayTotalTokens": 900, "todayTokensByModel": {},
+            "recentDays": [], "modelUsage": {}, "totalPrompts": 3, "totalSessions": 1,
+            "activeDays": 1, "activeDates": [],
+        }
+        with tempfile.TemporaryDirectory() as empty_state_dir:
+            with patch.object(opencode_go, "read_key", return_value=None), patch.object(opencode_go, "collect_local_stats", return_value=stats), patch("agent_usage_collectors.common.usage_dir", return_value=Path(empty_state_dir)):
+                record = collect_opencode_go()
+        self.assertFalse(record["ready"])
+        self.assertEqual(record["usageStatusText"], "Waiting for auth")
+        self.assertEqual(record["todayTotalTokens"], 900)
+        self.assertEqual(record["limits"], [])
+
+    def test_collect_reports_sign_in_expired_without_dropping_local_stats(self) -> None:
+        stats = {
+            "todayPrompts": 3, "todaySessions": 1, "todayTotalTokens": 900, "todayTokensByModel": {},
+            "recentDays": [], "modelUsage": {}, "totalPrompts": 3, "totalSessions": 1,
+            "activeDays": 1, "activeDates": [],
+        }
+        error = HTTPError("https://opencode.ai/zen/go/v1/usage", 401, "unauthorized", None, None)
+        with tempfile.TemporaryDirectory() as empty_state_dir:
+            with patch.object(opencode_go, "read_key", return_value="stale-key"), patch.object(opencode_go, "collect_local_stats", return_value=stats), patch.object(opencode_go, "request_json", side_effect=error), patch("agent_usage_collectors.common.usage_dir", return_value=Path(empty_state_dir)):
+                record = collect_opencode_go()
+        self.assertEqual(record["usageStatusText"], "OpenCode Go sign-in expired")
+        self.assertEqual(record["todayTotalTokens"], 900)
+
+    def test_collect_with_working_key_reports_all_three_windows(self) -> None:
+        stats = opencode_go_stats_from_rows([])
+        payload = {
+            "usage": {
+                "rolling": {"percent": 10, "resetsAt": "2026-08-23T18:00:00+00:00"},
+                "weekly": {"percent": 20, "resetsAt": "2026-08-27T00:00:00+00:00"},
+                "monthly": {"percent": 30, "resetsAt": "2026-09-01T00:00:00+00:00"},
+            }
+        }
+        with patch.object(opencode_go, "read_key", return_value="live-key"), patch.object(opencode_go, "collect_local_stats", return_value=stats), patch.object(opencode_go, "request_json", return_value=payload):
+            record = collect_opencode_go()
+        self.assertTrue(record["ready"])
+        self.assertEqual([limit["title"] for limit in record["limits"]], ["Session", "Weekly", "Monthly"])
+        self.assertEqual(record["limits"][1]["percent"], 0.2)
+
+
+def _utc_midnight_ms(days_ago: int) -> float:
+    from datetime import datetime, timedelta, timezone
+
+    midnight = datetime.now(timezone.utc).replace(hour=12, minute=0, second=0, microsecond=0) - timedelta(days=days_ago)
+    return midnight.timestamp() * 1000
 
 
 if __name__ == "__main__":
