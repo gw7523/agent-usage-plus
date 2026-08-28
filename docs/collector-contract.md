@@ -232,8 +232,8 @@ rather than a generic one:
   authoritative usage."`). Leave `limits`/`balance` empty, or — better —
   keep serving the last known-good values you have cached, since a window
   that hasn't reset yet is still a true reading. Do **not** set
-  `retryAdvised` for this case: an auth problem doesn't resolve itself
-  automatically the way a network hiccup might, so the panel just leaves
+  `retryAdvised` for this case: an auth problem doesn't resolve itself on a
+  30-second timer the way a network hiccup might, so the panel just leaves
   it to the normal refresh interval (and to the user fixing their
   credentials).
 - **Endpoint unreachable (transport failure).** Same two text fields

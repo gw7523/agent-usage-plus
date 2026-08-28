@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+"""Run Omarchy's Codex collector with the current Codex CLI approval policy.
+
+Codex CLI 0.149 removed the old ``-a untrusted`` value.  Omarchy's collector
+still uses it on some packaged versions, which leaves a healthy ChatGPT login
+with local token counts but no rate-limit windows.  This compatibility wrapper
+uses the root-owned collector unchanged except for that exact invocation.
+
+It deliberately reads only Omarchy's packaged collector and refuses an
+unexpected source shape; it never reads credentials or writes configuration.
+Remove the user-level symlink created by ``install.sh --codex-cli-compat`` to
+return to Omarchy's collector once the upstream package has caught up.
+"""
+
+from pathlib import Path
+import sys
+
+
+PACKAGED_COLLECTOR = Path("/usr/share/omarchy/bin/omarchy-agent-usage-codex")
+OLD = '[codex, "-s", "read-only", "-a", "untrusted", "app-server"]'
+NEW = '[codex, "-s", "read-only", "-a", "never", "app-server"]'
+
+
+def main():
+    try:
+        source = PACKAGED_COLLECTOR.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"Codex compatibility collector unavailable: {exc}", file=sys.stderr)
+        return 1
+
+    if OLD not in source:
+        # A newer Omarchy package has already fixed the incompatible value.
+        # Execute it as-is instead of carrying a stale patch forward.
+        replacement = source
+    elif source.count(OLD) == 1:
+        replacement = source.replace(OLD, NEW)
+    else:
+        print("Codex compatibility collector refused an unexpected upstream source", file=sys.stderr)
+        return 1
+
+    namespace = {"__name__": "__main__", "__file__": str(PACKAGED_COLLECTOR)}
+    exec(compile(replacement, str(PACKAGED_COLLECTOR), "exec"), namespace)
+    return 0
+
+
+if __name__ == "__main__":
+    main()
