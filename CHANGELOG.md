@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-08-28
+
 ### Added
 
 - OpenCode Go collector (`collectors/agent_usage_collectors/opencode_go.py`): reads
