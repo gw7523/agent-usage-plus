@@ -1839,7 +1839,7 @@ Panel {
           // subscription charge.
           BorderSurface {
             id: costSection
-            visible: root.expanded && !root.settingsOpen && !!root.cost
+            visible: !root.settingsOpen && !!root.cost
             width: parent.width
             implicitHeight: costContent.implicitHeight + Style.space(28)
             color: root.alpha(root.foreground, 0.035)

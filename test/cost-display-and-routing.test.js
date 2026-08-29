@@ -44,6 +44,7 @@ test("local updater uses the cost-aware collector when one is available", t => {
 test("panel restores a compact estimated API cost card", () => {
   const source = fs.readFileSync(panel, "utf8")
   assert.match(source, /id: costSection/)
+  assert.match(source, /visible: !root\.settingsOpen && !!root\.cost/)
   assert.match(source, /text: "Estimated API cost"/)
   assert.match(source, /root\.cost\.estimateUsd/)
 })
