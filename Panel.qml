@@ -1611,7 +1611,7 @@ Panel {
 
           // ---------- Balance / limits ----------
           PanelSeparator {
-            visible: balanceSection.visible || limitsSection.visible || detailModelSection.visible
+            visible: balanceSection.visible || limitsSection.visible || detailModelSection.visible || costSection.visible
             foreground: root.foreground
           }
 
@@ -1826,6 +1826,80 @@ Panel {
                 width: parent.width
                 text: root.unpricedModelText(root.cost)
                 color: root.warn
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+              }
+            }
+          }
+
+          // ---------- Estimated API cost ----------
+          // Keep the total visible beside the detailed model breakdown. The
+          // collector reports a published-rate equivalent, never a bill or
+          // subscription charge.
+          BorderSurface {
+            id: costSection
+            visible: root.expanded && !root.settingsOpen && !!root.cost
+            width: parent.width
+            implicitHeight: costContent.implicitHeight + Style.space(28)
+            color: root.alpha(root.foreground, 0.035)
+            borderSpec: Border.flat(root.alpha(root.foreground, 0.12), 1)
+            radius: Style.cornerRadius
+
+            Column {
+              id: costContent
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              anchors.leftMargin: Style.space(14)
+              anchors.rightMargin: Style.space(14)
+              spacing: Style.space(8)
+
+              PanelSectionHeader {
+                width: parent.width
+                text: "Estimated API cost"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
+
+              Item {
+                width: parent.width
+                implicitHeight: Math.max(costLabel.implicitHeight, costValue.implicitHeight)
+
+                Text {
+                  id: costLabel
+                  text: root.cost.incomplete ? "Partial API estimate" : "API-rate equivalent"
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  anchors.left: parent.left
+                  anchors.right: costValue.left
+                  anchors.rightMargin: Style.space(8)
+                  anchors.verticalCenter: parent.verticalCenter
+                  elide: Text.ElideRight
+                }
+
+                Text {
+                  id: costValue
+                  text: root.formatUsd(root.cost.estimateUsd)
+                  textFormat: Text.PlainText
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  font.bold: true
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+              }
+
+              Text {
+                visible: text !== ""
+                width: parent.width
+                text: root.cost.incomplete
+                  ? root.unpricedModelText(root.cost)
+                  : "Based on recorded tokens and published API rates; not subscription billing."
+                textFormat: Text.PlainText
+                color: root.cost.incomplete ? root.warn : root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
                 wrapMode: Text.WordWrap
