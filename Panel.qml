@@ -9,6 +9,7 @@ import "logic/format.js" as Format
 import "logic/aggregate.js" as Aggregate
 import "logic/history.js" as History
 import "logic/pace.js" as Pace
+import "logic/cost-analytics.js" as CostAnalytics
 
 Panel {
   id: root
@@ -90,8 +91,14 @@ Panel {
   // rates" estimate. Claude and Codex can populate it from local transcript
   // history when the optional cost decorator is installed.
   readonly property var cost: provider ? (provider.cost || null) : null
-  readonly property bool costHasModelBreakdown: !!cost && Array.isArray(cost.byModel)
-    && cost.byModel.length > 0
+  // Cost analytics are deliberately session-only and Details-only. The
+  // compact view is a quick status glance; showing a derived API price there
+  // made it compete with the real subscription allowance and duplicated the
+  // same number again below.
+  readonly property var costSummary: expanded && cost ? CostAnalytics.summary(cost) : null
+  readonly property var costModelRows: costSummary ? costSummary.models : []
+  readonly property var costDailyRows: costSummary ? costSummary.days : []
+  readonly property var costProviderRows: expanded ? CostAnalytics.providerRows(providers) : []
 
   // ---------------------------------------------------------- history chart
   //
@@ -515,26 +522,37 @@ Panel {
     return peak
   }
 
-  function apiCostForModel(row) {
-    if (!row || !root.cost || !Array.isArray(root.cost.byModel)) return null
-    var modelId = String(row.id || "")
-    var friendly = String(row.name || "")
-    for (var i = 0; i < root.cost.byModel.length; i++) {
-      var entry = root.cost.byModel[i] || {}
-      if (String(entry.model || "") === modelId
-        || usage.friendlyModelName(entry.model) === friendly) return Number(entry.usd || 0)
-    }
-    return null
-  }
-
   function unpricedModelText(cost) {
     if (!cost || !cost.incomplete) return ""
-    var unknown = cost.unknownModels || []
+    var unknown = Array.isArray(cost.unknownModels) ? cost.unknownModels : []
     var names = []
-    for (var i = 0; i < unknown.length; i++) names.push(usage.friendlyModelName(unknown[i]))
+    for (var i = 0; i < unknown.length; i++) {
+      var name = usage.friendlyModelName(unknown[i])
+      if (names.indexOf(name) < 0) names.push(name)
+    }
     return names.length > 0
-      ? "API USD is partial. No published rate for " + names.join(", ") + "."
-      : "API USD is partial because some models have no published rate."
+      ? "Excluded from estimate: " + names.join(", ") + "."
+      : "Some models have no published rate and are excluded."
+  }
+
+  function costCoverageText(coverage) {
+    var value = Number(coverage)
+    return isFinite(value) && value >= 0 ? Math.round(value * 100) + "% priced" : "Rate coverage unavailable"
+  }
+
+  function costProviderTooltip(row) {
+    if (!row) return ""
+    var text = String(row.providerName || "Provider") + " · " + root.formatUsd(row.estimateUsd)
+    if (row.period) text += " · " + String(row.period)
+    if (Number(row.coverage) >= 0) text += " · " + root.costCoverageText(row.coverage)
+    if (row.incomplete) text += " · partial estimate"
+    return text
+  }
+
+  function costModelTooltip(row) {
+    if (!row) return ""
+    return usage.friendlyModelName(row.model) + " · " + root.formatUsd(row.usd)
+      + " · " + usage.formatTokenCount(row.tokens) + " tokens"
   }
 
   function dayTooltip(day, today) {
@@ -911,6 +929,59 @@ Panel {
     root.notificationRunning = true
     notifyProcess.command = next
     notifyProcess.running = true
+  }
+
+  // A compact metric tile keeps the important cost signals aligned without
+  // turning each one into another warning-looking sentence.
+  component CostMetric: Item {
+    id: costMetric
+    property string label: ""
+    property string valueText: ""
+    property string hint: ""
+
+    implicitHeight: metricContent.implicitHeight
+
+    Column {
+      id: metricContent
+      anchors.left: parent.left
+      anchors.right: parent.right
+      spacing: Style.space(2)
+
+      Text {
+        width: parent.width
+        text: costMetric.valueText
+        textFormat: Text.PlainText
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.subtitle
+        font.bold: true
+        horizontalAlignment: Text.AlignHCenter
+        elide: Text.ElideRight
+      }
+
+      Text {
+        width: parent.width
+        text: costMetric.label
+        textFormat: Text.PlainText
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        horizontalAlignment: Text.AlignHCenter
+        elide: Text.ElideRight
+      }
+
+      Text {
+        visible: costMetric.hint !== ""
+        width: parent.width
+        text: costMetric.hint
+        textFormat: Text.PlainText
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        horizontalAlignment: Text.AlignHCenter
+        elide: Text.ElideRight
+      }
+    }
   }
 
   // A wide track with faint ticks at the quarter marks, so the fill reads
@@ -1730,9 +1801,9 @@ Panel {
           }
 
           // ---------- Token usage by model ----------
-          // Details starts with the useful accounting view. Keep it tied to
-          // the selected provider so the optional API price on each row cannot
-          // accidentally be read as a total for every subscription at once.
+          // Details starts with the useful accounting view. Price information
+          // lives in the analytics card below, so this table stays about the
+          // provider's actual recorded token use and never repeats a cost.
           BorderSurface {
             id: detailModelSection
             visible: root.expanded && root.detailModels.length > 0
@@ -1758,16 +1829,6 @@ Panel {
                 fontFamily: root.fontFamily
               }
 
-              Text {
-                visible: root.costHasModelBreakdown
-                width: parent.width
-                text: "API USD is a published-rate estimate, not subscription billing."
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                wrapMode: Text.WordWrap
-              }
-
               Item {
                 width: parent.width
                 implicitHeight: modelHeading.implicitHeight
@@ -1789,22 +1850,8 @@ Panel {
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                   font.bold: true
-                  anchors.right: root.costHasModelBreakdown ? modelHeadingCost.left : parent.right
-                  anchors.rightMargin: root.costHasModelBreakdown ? Style.space(10) : Style.space(8)
-                  anchors.verticalCenter: parent.verticalCenter
-                }
-
-                Text {
-                  id: modelHeadingCost
-                  visible: root.costHasModelBreakdown
-                  width: Style.space(70)
-                  text: "API USD"
-                  color: root.dim
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.bold: true
-                  horizontalAlignment: Text.AlignRight
                   anchors.right: parent.right
+                  anchors.rightMargin: Style.space(8)
                   anchors.verticalCenter: parent.verticalCenter
                 }
               }
@@ -1817,94 +1864,471 @@ Panel {
                   width: detailModelContent.width
                   row: modelData
                   share: modelData.total / Math.max(1, root.detailModels[0].total)
-                  apiCost: root.apiCostForModel(modelData)
                 }
-              }
-
-              Text {
-                visible: root.costHasModelBreakdown && root.cost.incomplete
-                width: parent.width
-                text: root.unpricedModelText(root.cost)
-                color: root.warn
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                wrapMode: Text.WordWrap
               }
             }
           }
 
-          // ---------- Estimated API cost ----------
-          // Keep the total visible beside the detailed model breakdown. The
-          // collector reports a published-rate equivalent, never a bill or
-          // subscription charge.
-          BorderSurface {
+          // ---------- Cost analytics (Details only) ----------
+          // A derived API-rate figure is useful when someone asks for it, but
+          // it is not a subscription allowance. Keep it out of the compact
+          // dashboard and give it one calm, data-dense home in Details.
+          Column {
             id: costSection
-            visible: !root.settingsOpen && !!root.cost
+            visible: root.expanded && !root.settingsOpen
+              && (!!root.cost || root.costProviderRows.length > 0)
             width: parent.width
-            implicitHeight: costContent.implicitHeight + Style.space(28)
-            color: root.alpha(root.foreground, 0.035)
-            borderSpec: Border.flat(root.alpha(root.foreground, 0.12), 1)
-            radius: Style.cornerRadius
+            spacing: Style.space(10)
 
-            Column {
-              id: costContent
-              anchors.left: parent.left
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              anchors.leftMargin: Style.space(14)
-              anchors.rightMargin: Style.space(14)
-              spacing: Style.space(8)
+            BorderSurface {
+              id: costProviderOverview
+              visible: root.costProviderRows.length > 1
+                || (!root.cost && root.costProviderRows.length > 0)
+              width: parent.width
+              implicitHeight: providerOverviewContent.implicitHeight + Style.space(28)
+              color: root.alpha(root.foreground, 0.035)
+              borderSpec: Border.flat(root.alpha(root.foreground, 0.12), 1)
+              radius: Style.cornerRadius
 
-              PanelSectionHeader {
-                width: parent.width
-                text: "Estimated API cost" + (root.cost && root.cost.period ? " (" + root.cost.period + ")" : "")
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-              }
+              Column {
+                id: providerOverviewContent
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: Style.space(14)
+                anchors.rightMargin: Style.space(14)
+                spacing: Style.space(8)
 
-              Item {
-                width: parent.width
-                implicitHeight: Math.max(costLabel.implicitHeight, costValue.implicitHeight)
-
-                Text {
-                  id: costLabel
-                  text: root.cost && root.cost.incomplete ? "Partial API estimate" : "API-rate equivalent"
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                  anchors.left: parent.left
-                  anchors.right: costValue.left
-                  anchors.rightMargin: Style.space(8)
-                  anchors.verticalCenter: parent.verticalCenter
-                  elide: Text.ElideRight
+                PanelSectionHeader {
+                  width: parent.width
+                  text: "Estimated cost · all providers"
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
                 }
 
                 Text {
-                  id: costValue
-                  text: root.cost ? root.formatUsd(root.cost.estimateUsd) : ""
+                  width: parent.width
+                  text: "Share of reported estimates · hover a row for period and rate coverage"
                   textFormat: Text.PlainText
-                  color: root.foreground
+                  color: root.dim
                   font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                  font.bold: true
-                  anchors.right: parent.right
-                  anchors.verticalCenter: parent.verticalCenter
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+
+                Repeater {
+                  model: root.costProviderRows
+
+                  Item {
+                    id: providerCostRow
+                    required property var modelData
+                    width: providerOverviewContent.width
+                    height: Style.space(40)
+
+                    Text {
+                      id: providerCostName
+                      width: parent.width - providerCostValue.width - Style.space(8)
+                      text: String(providerCostRow.modelData.providerName || "Provider")
+                      textFormat: Text.PlainText
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                      font.bold: true
+                      elide: Text.ElideRight
+                      anchors.left: parent.left
+                      anchors.right: providerCostValue.left
+                      anchors.rightMargin: Style.space(8)
+                      anchors.verticalCenter: parent.verticalCenter
+                    }
+
+                    Text {
+                      id: providerCostValue
+                      width: Style.space(78)
+                      text: root.formatUsd(providerCostRow.modelData.estimateUsd)
+                      textFormat: Text.PlainText
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                      font.bold: true
+                      horizontalAlignment: Text.AlignRight
+                      anchors.right: parent.right
+                      anchors.verticalCenter: parent.verticalCenter
+                    }
+
+                    Rectangle {
+                      id: providerCostTrack
+                      anchors.left: parent.left
+                      anchors.right: parent.right
+                      anchors.bottom: parent.bottom
+                      height: Math.max(Style.space(3), Math.round(Style.spacing.controlHeight * 0.10))
+                      radius: height / 2
+                      color: root.track
+                    }
+
+                    Rectangle {
+                      anchors.left: providerCostTrack.left
+                      anchors.verticalCenter: providerCostTrack.verticalCenter
+                      width: providerCostTrack.width * root.clamp(Number(providerCostRow.modelData.share || 0), 0, 1)
+                      height: providerCostTrack.height
+                      radius: providerCostTrack.radius
+                      color: Color.accent
+
+                      Behavior on width {
+                        NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+                      }
+                    }
+
+                    MouseArea {
+                      id: providerCostHover
+                      anchors.fill: parent
+                      hoverEnabled: true
+                      acceptedButtons: Qt.NoButton
+                    }
+
+                    PanelToolTip {
+                      visible: providerCostHover.containsMouse
+                      text: root.costProviderTooltip(providerCostRow.modelData)
+                      fontFamily: root.fontFamily
+                    }
+                  }
                 }
               }
+            }
 
-              Text {
-                visible: text !== ""
-                width: parent.width
-                text: root.cost && root.cost.incomplete
-                  ? root.unpricedModelText(root.cost)
-                  : root.cost
-                    ? "Based on recorded tokens and published API rates; not subscription billing."
-                    : ""
-                textFormat: Text.PlainText
-                color: root.cost && root.cost.incomplete ? root.warn : root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                wrapMode: Text.WordWrap
+            BorderSurface {
+              id: costAnalyticsCard
+              visible: !!root.cost
+              width: parent.width
+              implicitHeight: costAnalyticsContent.implicitHeight + Style.space(28)
+              color: root.alpha(root.foreground, 0.035)
+              borderSpec: Border.flat(root.alpha(root.foreground, 0.12), 1)
+              radius: Style.cornerRadius
+
+              Column {
+                id: costAnalyticsContent
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: Style.space(14)
+                anchors.rightMargin: Style.space(14)
+                spacing: Style.space(10)
+
+                PanelSectionHeader {
+                  width: parent.width
+                  text: "Estimated API cost" + (root.cost && root.cost.period ? " (" + root.cost.period + ")" : "")
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                }
+
+                Text {
+                  id: costDisclosure
+                  visible: !!root.cost
+                  width: parent.width
+                  text: root.cost && root.cost.incomplete
+                    ? "Partial estimate · " + root.unpricedModelText(root.cost)
+                    : "Published API-rate equivalent · not subscription billing."
+                  textFormat: Text.PlainText
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+
+                Row {
+                  id: costMetrics
+                  width: parent.width
+                  spacing: Style.space(8)
+
+                  CostMetric {
+                    width: (costMetrics.width - costMetrics.spacing * 2) / 3
+                    valueText: root.cost ? root.formatUsd(root.cost.estimateUsd) : ""
+                    label: root.cost && root.cost.incomplete ? "Estimated · partial" : "Estimated total"
+                    hint: "API-rate equivalent"
+                  }
+
+                  CostMetric {
+                    width: (costMetrics.width - costMetrics.spacing * 2) / 3
+                    valueText: root.costSummary && root.costSummary.dailyActiveDays > 0
+                      ? root.formatUsd(root.costSummary.averageDailyUsd) : "—"
+                    label: "Avg active day"
+                    hint: root.costSummary && root.costSummary.dailyActiveDays > 0
+                      ? root.costSummary.dailyActiveDays + " active days" : "No daily data"
+                  }
+
+                  CostMetric {
+                    width: (costMetrics.width - costMetrics.spacing * 2) / 3
+                    valueText: root.costSummary && root.costSummary.coverage >= 0
+                      ? Math.round(root.costSummary.coverage * 100) + "%" : "—"
+                    label: "Price coverage"
+                    hint: "tokens with a rate"
+                  }
+                }
+
+                Column {
+                  id: costDailyBlock
+                  visible: !!root.cost
+                  width: parent.width
+                  spacing: Style.space(6)
+
+                  PanelSectionHeader {
+                    width: parent.width
+                    text: "Daily estimate"
+                    foreground: root.foreground
+                    fontFamily: root.fontFamily
+                  }
+
+                  Text {
+                    visible: root.costDailyRows.length === 0
+                    width: parent.width
+                    text: "Daily breakdown not provided by this collector."
+                    textFormat: Text.PlainText
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    wrapMode: Text.WordWrap
+                  }
+
+                  Text {
+                    visible: root.costDailyRows.length > 0
+                    width: parent.width
+                    text: root.costSummary
+                      ? root.costDailyRows.length + " recorded days · "
+                        + root.formatUsd(root.costSummary.dailyTotalUsd) + " on active days"
+                      : ""
+                    textFormat: Text.PlainText
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+
+                  Item {
+                    id: costDailyChart
+                    visible: root.costDailyRows.length > 0
+                    width: parent.width
+                    height: Style.space(154)
+
+                    readonly property real axisLeft: Style.space(48)
+                    readonly property real axisRight: Style.space(8)
+                    readonly property real axisTop: Style.space(10)
+                    readonly property real axisBottom: Style.space(24)
+                    readonly property real plotWidth: Math.max(0, width - axisLeft - axisRight)
+                    readonly property real plotHeight: Math.max(0, height - axisTop - axisBottom)
+                    readonly property real peak: root.costSummary
+                      ? Math.max(0, Number(root.costSummary.dailyPeakUsd || 0)) : 0
+
+                    Repeater {
+                      model: [0, 0.5, 1]
+
+                      Item {
+                        required property real modelData
+                        width: costDailyChart.width
+                        height: 1
+                        y: costDailyChart.axisTop
+                          + costDailyChart.plotHeight * (1 - modelData)
+
+                        Text {
+                          width: costDailyChart.axisLeft - Style.space(8)
+                          height: Style.space(14)
+                          y: -height / 2
+                          text: root.formatUsd(costDailyChart.peak * modelData)
+                          textFormat: Text.PlainText
+                          color: root.dim
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.caption
+                          horizontalAlignment: Text.AlignRight
+                          elide: Text.ElideRight
+                        }
+
+                        Rectangle {
+                          x: costDailyChart.axisLeft
+                          width: costDailyChart.plotWidth
+                          height: 1
+                          color: root.alpha(root.foreground, 0.14)
+                        }
+                      }
+                    }
+
+                    Repeater {
+                      model: root.costDailyRows
+
+                      Item {
+                        id: costDayBar
+                        required property var modelData
+                        required property int index
+                        width: costDailyChart.plotWidth / Math.max(1, root.costDailyRows.length)
+                        height: costDailyChart.plotHeight
+                        x: costDailyChart.axisLeft + index * width
+                        y: costDailyChart.axisTop
+
+                        Rectangle {
+                          width: Math.max(3, Math.min(parent.width * 0.66, parent.width - Style.space(4)))
+                          height: Number(costDayBar.modelData.usd || 0) > 0
+                            ? Math.max(2, parent.height * Math.min(1,
+                              Number(costDayBar.modelData.usd || 0) / Math.max(0.0001, costDailyChart.peak)))
+                            : 1
+                          anchors.bottom: parent.bottom
+                          anchors.horizontalCenter: parent.horizontalCenter
+                          radius: Math.min(width / 2, Style.cornerRadius)
+                          color: costDayBar.index === root.costDailyRows.length - 1
+                            ? root.foreground : Color.accent
+                          opacity: costDayBar.index === root.costDailyRows.length - 1 ? 1.0 : 0.78
+                        }
+
+                        MouseArea {
+                          id: costDayHover
+                          anchors.fill: parent
+                          hoverEnabled: true
+                          acceptedButtons: Qt.NoButton
+                        }
+
+                        PanelToolTip {
+                          visible: costDayHover.containsMouse
+                          text: root.shortHistoryDate(costDayBar.modelData.date) + " · "
+                            + root.formatUsd(costDayBar.modelData.usd)
+                          fontFamily: root.fontFamily
+                        }
+                      }
+                    }
+
+                    Row {
+                      id: costDailyLabels
+                      x: costDailyChart.axisLeft
+                      y: costDailyChart.height - height
+                      width: costDailyChart.plotWidth
+                      height: Style.space(16)
+
+                      Repeater {
+                        model: root.costDailyRows
+
+                        Text {
+                          required property var modelData
+                          required property int index
+                          width: costDailyLabels.width / Math.max(1, root.costDailyRows.length)
+                          visible: index === 0 || index === root.costDailyRows.length - 1
+                            || (root.costDailyRows.length > 2
+                              && index === Math.floor((root.costDailyRows.length - 1) / 2))
+                          text: root.shortHistoryDate(modelData.date)
+                          textFormat: Text.PlainText
+                          color: index === root.costDailyRows.length - 1 ? root.foreground : root.dim
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.caption
+                          horizontalAlignment: Text.AlignHCenter
+                          elide: Text.ElideRight
+                        }
+                      }
+                    }
+                  }
+                }
+
+                Column {
+                  id: costModelChart
+                  visible: root.costModelRows.length > 0
+                  width: parent.width
+                  spacing: Style.space(6)
+
+                  PanelSectionHeader {
+                    width: parent.width
+                    text: "Spend by model"
+                    foreground: root.foreground
+                    fontFamily: root.fontFamily
+                  }
+
+                  Repeater {
+                    model: root.costModelRows
+
+                    Item {
+                      id: costModelRow
+                      required property var modelData
+                      width: costModelChart.width
+                      height: Style.space(38)
+
+                      Text {
+                        id: costModelName
+                        text: usage.friendlyModelName(costModelRow.modelData.model)
+                        textFormat: Text.PlainText
+                        color: root.foreground
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: true
+                        elide: Text.ElideRight
+                        anchors.left: parent.left
+                        anchors.right: costModelValue.left
+                        anchors.rightMargin: Style.space(8)
+                        anchors.verticalCenter: parent.verticalCenter
+                      }
+
+                      Text {
+                        id: costModelValue
+                        width: Style.space(78)
+                        text: root.formatUsd(costModelRow.modelData.usd)
+                        textFormat: Text.PlainText
+                        color: root.foreground
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: true
+                        horizontalAlignment: Text.AlignRight
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                      }
+
+                      Rectangle {
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.bottom: parent.bottom
+                        height: Math.max(Style.space(3), Math.round(Style.spacing.controlHeight * 0.10))
+                        radius: height / 2
+                        color: root.track
+                      }
+
+                      Rectangle {
+                        anchors.left: parent.left
+                        anchors.bottom: parent.bottom
+                        width: parent.width * root.clamp(Number(costModelRow.modelData.share || 0), 0, 1)
+                        height: Math.max(Style.space(3), Math.round(Style.spacing.controlHeight * 0.10))
+                        radius: height / 2
+                        color: Color.accent
+
+                        Behavior on width {
+                          NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+                        }
+                      }
+
+                      MouseArea {
+                        id: costModelHover
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        acceptedButtons: Qt.NoButton
+                      }
+
+                      PanelToolTip {
+                        visible: costModelHover.containsMouse
+                        text: root.costModelTooltip(costModelRow.modelData)
+                        fontFamily: root.fontFamily
+                      }
+                    }
+                  }
+                }
+
+                Text {
+                  visible: !!root.cost && root.costModelRows.length === 0
+                  width: parent.width
+                  text: "Model breakdown not provided by this collector."
+                  textFormat: Text.PlainText
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+
+                Text {
+                  visible: !!root.cost && String(root.cost.pricingVersion || "") !== ""
+                  width: parent.width
+                  text: root.cost ? "Rate catalogue " + String(root.cost.pricingVersion || "") : ""
+                  textFormat: Text.PlainText
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
               }
             }
           }
@@ -2913,7 +3337,6 @@ Panel {
     id: modelRow
     property var row: null
     property real share: 0
-    property var apiCost: null
 
     implicitHeight: modelName.implicitHeight + Style.spacing.lg
 
@@ -2952,30 +3375,14 @@ Panel {
     }
 
     Text {
-      id: modelCost
-      visible: root.costHasModelBreakdown
-      width: Style.space(70)
-      text: modelRow.apiCost !== null && modelRow.apiCost !== undefined
-        ? root.formatUsd(modelRow.apiCost) : "n/a"
-      textFormat: Text.PlainText
-      color: root.dim
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.caption
-      horizontalAlignment: Text.AlignRight
-      anchors.right: parent.right
-      anchors.rightMargin: Style.space(8)
-      anchors.verticalCenter: parent.verticalCenter
-    }
-
-    Text {
       id: modelTokens
       text: modelRow.row ? usage.formatTokenCount(modelRow.row.total) : ""
       color: root.dim
       font.family: root.fontFamily
       font.pixelSize: Style.font.bodySmall
       font.bold: true
-      anchors.right: modelCost.visible ? modelCost.left : parent.right
-      anchors.rightMargin: modelCost.visible ? Style.space(10) : Style.space(8)
+      anchors.right: parent.right
+      anchors.rightMargin: Style.space(8)
       anchors.verticalCenter: parent.verticalCenter
     }
 
