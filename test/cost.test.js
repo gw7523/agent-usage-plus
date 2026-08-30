@@ -30,11 +30,12 @@ test("calculateCost rates Codex cache writes at input price and returns day rows
 test("calculateCost marks the priced subtotal partial when another used model is unknown", () => {
   const result = Cost.calculateCost({ provider: "claude", modelUsage: {
     "claude-sonnet-4-20250514": { inputTokens: 100 }, "future-claude": { outputTokens: 100 }
-  } })
+  }, activeDays: 4 })
   assert.equal(result.cost.estimateUsd, 0.0003)
   assert.equal(result.cost.incomplete, true)
   assert.equal(result.cost.pricedTokens, 100)
   assert.equal(result.cost.unpricedTokens, 100)
+  assert.equal(result.cost.activeDays, 4)
   assert.deepEqual(result.unknownModels, ["future-claude"])
 })
 

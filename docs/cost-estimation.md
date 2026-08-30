@@ -12,6 +12,7 @@ const result = Cost.calculateCost({
   provider: "claude", // or "codex"
   period: "30d",
   modelUsage,          // { modelId: TokenBucket }
+  activeDays,          // optional distinct recorded usage days
   dailyModelUsage      // optional { "YYYY-MM-DD": { modelId: TokenBucket } }
 })
 
@@ -39,7 +40,10 @@ marked partial subtotal: `cost.incomplete` is `true`, `unknownModels` names
 the excluded models, and the panel says so. If every used model is unknown,
 `cost` remains absent — never publish a fabricated `$0` estimate. Store
 `pricingVersion` with the output so a cached record is auditable after prices
-change.
+change. The wrapper also passes the base collector's `activeDays` through to
+the cost block. When `byDay` is unavailable, the Details view uses
+`estimateUsd / activeDays` for **Avg / recorded day** and says explicitly that
+the value is derived; it never invents a day-by-day chart.
 
 The catalogue uses standard, non-batch USD API rates per million tokens and
 is versioned in `logic/api-price-catalogue.js`. Update its version,

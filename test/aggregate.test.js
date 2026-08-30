@@ -97,6 +97,11 @@ test("costValue: parses estimateUsd, period, byModel, and byDay from a compliant
   assert.equal(cost.byDay[1].usd, 0.87)
 })
 
+test("costValue: preserves bounded recorded active days for an aggregate average", () => {
+  const cost = Aggregate.costValue({ estimateUsd: 5, activeDays: 12.8 })
+  assert.equal(cost.activeDays, 12)
+})
+
 test("costValue: a missing/negative estimateUsd makes the whole cost object absent", () => {
   assert.equal(Aggregate.costValue(null), null)
   assert.equal(Aggregate.costValue({}), null)

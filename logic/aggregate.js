@@ -170,6 +170,10 @@ function costValue(raw) {
     })
   }
 
+  var activeDays = Number(raw.activeDays)
+  activeDays = isFinite(activeDays) && activeDays > 0
+    ? Math.min(100000, Math.floor(activeDays)) : 0
+
   return {
     estimateUsd: estimateUsd,
     period: sanitizeDisplayText(raw.period, 20),
@@ -180,6 +184,7 @@ function costValue(raw) {
     }).filter(function(model) { return !!model }) : [],
     pricedTokens: numberValue(raw.pricedTokens),
     unpricedTokens: numberValue(raw.unpricedTokens),
+    activeDays: activeDays,
     byModel: byModel,
     byDay: byDay
   }

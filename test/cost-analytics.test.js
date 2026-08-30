@@ -61,14 +61,47 @@ test("summary exposes useful totals, active-day average, peak, and price coverag
   assert.equal(result.topModel, "top")
 })
 
-test("providerRows keeps every provider with a valid cost and ranks the overview", () => {
+test("summary derives avg daily from recorded active days when byDay is unavailable", () => {
+  const result = CostAnalytics.summary({
+    estimateUsd: 12,
+    byModel: [{ model: "top", usd: 12, tokens: 1200 }],
+    byDay: [],
+  }, { activeDays: 4 })
+
+  assert.equal(result.averageDailyUsd, 3)
+  assert.equal(result.averageDailyDays, 4)
+  assert.equal(result.dailySource, "recorded-days")
+  assert.equal(result.hasDailyAverage, true)
+})
+
+test("providerRows keeps every provider and separates plan usage from API estimates", () => {
   const rows = CostAnalytics.providerRows([
-    { providerId: "claude", providerName: "Claude", cost: { estimateUsd: 10, incomplete: false } },
-    { providerId: "codex", providerName: "Codex", cost: null },
-    { providerId: "gemini", providerName: "Gemini", cost: { estimateUsd: 2, incomplete: true } },
+    {
+      providerId: "claude",
+      providerName: "Claude",
+      limits: [{ title: "Session", percent: 0.61 }],
+      cost: { estimateUsd: 10, incomplete: false },
+    },
+    {
+      providerId: "codex",
+      providerName: "Codex",
+      limits: [{ title: "Weekly", percent: 0.27 }],
+      cost: null,
+    },
+    {
+      providerId: "gemini",
+      providerName: "Gemini",
+      balance: { remaining: 8.5, funded: 10, spent: 1.5, currency: "USD" },
+      cost: { estimateUsd: 2, incomplete: true },
+    },
   ])
 
-  assert.deepEqual(rows.map((row) => row.providerId), ["claude", "gemini"])
+  assert.deepEqual(rows.map((row) => row.providerId), ["claude", "codex", "gemini"])
   assert.equal(rows[0].share, 10 / 12)
-  assert.equal(rows[1].incomplete, true)
+  assert.equal(rows[0].subscriptionPercent, 0.61)
+  assert.equal(rows[1].hasCost, false)
+  assert.equal(rows[1].subscriptionPercent, 0.27)
+  assert.equal(rows[2].balanceRemaining, 8.5)
+  assert.ok(Math.abs(rows[2].balanceUsedPercent - 0.15) < 1e-9)
+  assert.equal(rows[2].incomplete, true)
 })

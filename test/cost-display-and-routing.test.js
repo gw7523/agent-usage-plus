@@ -22,7 +22,7 @@ function readCostCard() {
 function readDetailModelSection() {
   const source = fs.readFileSync(panel, "utf8")
   const start = source.indexOf("id: detailModelSection")
-  const end = source.indexOf("// ---------- Cost analytics", start)
+  const end = source.indexOf("// ---------- Plan vs API", start)
   assert.ok(start >= 0 && end > start, "detail model section should be present")
   return source.slice(start, end)
 }
@@ -36,7 +36,9 @@ test("panel keeps estimated API cost out of compact view", () => {
   assert.match(source, /id: costSection/)
   assert.match(source, /visible:\s*root\.expanded\s*&&\s*!root\.settingsOpen/)
   assert.match(source, /root\.costProviderRows\.length/)
-  assert.match(source, /text: "Estimated API cost"/)
+  assert.match(source, /text: "Plan vs API"/)
+  assert.match(source, /return "On subscription"/)
+  assert.match(source, /label: "If billed by API"/)
   assert.match(source, /root\.cost\.estimateUsd/)
 })
 
@@ -45,19 +47,19 @@ test("panel guards optional cost values before evaluating a hidden card", () => 
   assert.doesNotMatch(source, /text:\s*root\.cost\.incomplete\b/)
   assert.doesNotMatch(source, /color:\s*root\.cost\.incomplete\b/)
   assert.doesNotMatch(source, /text:\s*root\.formatUsd\(root\.cost\.estimateUsd\)/)
-  assert.match(source, /root\.cost\s*&&\s*root\.cost\.incomplete/)
-  assert.match(source, /root\.cost\s*\?\s*root\.formatUsd\(root\.cost\.estimateUsd\)\s*:\s*""/)
+  assert.match(source, /root\.cost\s*\?\s*\(root\.cost\.incomplete/)
+  assert.match(source, /root\.cost\s*\?\s*root\.formatUsd\(root\.cost\.estimateUsd\)\s*:\s*"—"/)
 })
 
 test("panel displays the collector cost period next to the estimate", () => {
-  assert.match(readCostCard(), /"Estimated API cost"\s*\+\s*\(root\.cost\s*&&\s*root\.cost\.period/)
+  assert.match(readCostCard(), /"Plan vs API"\s*\+\s*\(root\.cost\s*&&\s*root\.cost\.period/)
 })
 
 test("cost details keep the partial disclosure neutral and singular", () => {
   const source = readCostCard()
   assert.doesNotMatch(source, /color:\s*root\.warn/)
   assert.doesNotMatch(source, /API USD is a published-rate estimate, not subscription billing\./)
-  assert.match(source, /Partial estimate/)
+  assert.match(source, /Partial API equivalent/)
 })
 
 test("token details do not repeat API prices or partial warnings", () => {
@@ -71,6 +73,17 @@ test("expanded cost details include provider, daily, and model analytics", () =>
   assert.match(source, /id: costProviderOverview/)
   assert.match(source, /id: costDailyChart/)
   assert.match(source, /id: costModelChart/)
+  assert.match(source, /model: root\.costProviderRows/)
+  assert.match(source, /id: costValueCard/)
+})
+
+test("cost average uses the provider's recorded days when collectors omit byDay", () => {
+  const source = fs.readFileSync(panel, "utf8")
+
+  assert.match(source, /CostAnalytics\.summary\(cost, provider\)/)
+  assert.match(source, /root\.costSummary\.hasDailyAverage/)
+  assert.match(source, /root\.costSummary\.averageDailyDays/)
+  assert.match(source, /root\.costSummary\.dailySource/)
 })
 
 test("details expansion animates popup height to avoid a re-anchor snap", () => {
@@ -86,7 +99,7 @@ test("Claude cost wrapper routes a base record through the bundled estimator", t
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-usage-cost-routing-"))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   const base = path.join(root, "claude-base")
-  executable(base, `printf '%s\\n' '{"id":"claude","ready":true,"modelUsage":{"claude-sonnet-5":{"inputTokens":1000000}}}'`)
+  executable(base, `printf '%s\\n' '{"id":"claude","ready":true,"activeDays":3,"modelUsage":{"claude-sonnet-5":{"inputTokens":1000000}}}'`)
 
   const output = execFileSync(claudeCostCollector, [], {
     env: {
@@ -100,4 +113,5 @@ test("Claude cost wrapper routes a base record through the bundled estimator", t
   assert.equal(record.id, "claude")
   assert.equal(record.cost.estimateUsd, 2)
   assert.equal(record.cost.period, "Local transcript history")
+  assert.equal(record.cost.activeDays, 3)
 })
