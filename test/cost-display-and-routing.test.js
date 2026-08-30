@@ -73,6 +73,15 @@ test("expanded cost details include provider, daily, and model analytics", () =>
   assert.match(source, /id: costModelChart/)
 })
 
+test("details expansion animates popup height to avoid a re-anchor snap", () => {
+  const source = fs.readFileSync(panel, "utf8")
+
+  assert.match(
+    source,
+    /Behavior on contentHeight\s*\{[\s\S]*?NumberAnimation\s*\{[\s\S]*?duration:\s*180/
+  )
+})
+
 test("Claude cost wrapper routes a base record through the bundled estimator", t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-usage-cost-routing-"))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))

@@ -1273,6 +1273,12 @@ Panel {
     // but making the default popup short turned even ordinary mouse-wheel
     // scrolling into needless work.
     contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(660))
+    // KeyboardPanel derives the card origin from this height. Details reveal
+    // several sections at once, so let the card settle to its new anchor over
+    // one short transition instead of visibly snapping as each binding lands.
+    Behavior on contentHeight {
+      NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+    }
 
     PanelKeyCatcher {
       id: keyCatcher
