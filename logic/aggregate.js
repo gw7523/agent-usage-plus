@@ -83,6 +83,45 @@ function capRecentDays(raw) {
 // Bounds how many distinct model ids a single record/snapshot can push into
 // TOKENS BY MODEL bookkeeping, independent of the top-4 Panel.qml already
 // displays — that slice happens after this data is built and merged.
+// Number-map sanitizer for per-model cost maps (model id -> usd).
+function numberMap(raw) {
+  var src = raw && typeof raw === "object" ? raw : {}
+  var out = safeMap()
+  var count = 0
+  for (var id in src) {
+    if (count >= 100) break
+    var n = Number(src[id])
+    if (!isFinite(n) || n < 0) continue
+    out[sanitizeDisplayText(id, 80)] = n
+    count++
+  }
+  return out
+}
+
+// Per-day variant: { "YYYY-MM-DD": { modelId: usd } }.
+function dayNumberMap(raw) {
+  var src = raw && typeof raw === "object" ? raw : {}
+  var out = safeMap()
+  var count = 0
+  for (var day in src) {
+    if (count >= 31) break
+    var entry = src[day]
+    if (!entry || typeof entry !== "object") continue
+    out[day] = numberMapValue(entry)
+    count++
+  }
+  return out
+}
+
+function numberMapValue(entry) {
+  var o = {}
+  for (var model in entry) {
+    var n = Number(entry[model])
+    if (isFinite(n) && n > 0) o[model] = n
+  }
+  return o
+}
+
 function capModelUsage(raw) {
   var usage = raw && typeof raw === "object" ? raw : {}
   var out = safeMap()
@@ -488,6 +527,10 @@ function mergeProviderDisplay(record, stats, aggregateMeta) {
     todaySessions: synced ? numberValue(stats.todaySessions) : numberValue(record.todaySessions),
     todayTotalTokens: synced ? numberValue(stats.todayTotalTokens) : numberValue(record.todayTotalTokens),
     todayTokensByModel: synced ? capModelUsage(stats.todayTokensByModel) : capModelUsage(record.todayTokensByModel),
+    todayCostsByModel: synced ? numberMap(stats.todayCostsByModel) : numberMap(record.todayCostsByModel),
+    weekCostsByModel: synced ? numberMap(stats.weekCostsByModel) : numberMap(record.weekCostsByModel),
+    weekTokensByModel: synced ? numberMap(stats.weekTokensByModel) : numberMap(record.weekTokensByModel),
+    dailyCostsByModel: synced ? dayNumberMap(stats.dailyCostsByModel) : dayNumberMap(record.dailyCostsByModel),
     recentDays: synced ? capRecentDays(stats.recentDays) : capRecentDays(record.recentDays),
     totalPrompts: synced ? numberValue(stats.totalPrompts) : numberValue(record.totalPrompts),
     totalSessions: synced ? numberValue(stats.totalSessions) : numberValue(record.totalSessions),
