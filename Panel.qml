@@ -419,6 +419,34 @@ Panel {
     return Format.formatUsd(value)
   }
 
+  // ---- Cost by model (today / trailing week) -----------------------------
+  // The openrouter collector prices its pi-session transcripts and lands
+  // per-model costs for today and the trailing week on the record. Bars are
+  // green cost meters scaled to each group's leader, mirroring the day-row
+  // cost bars but grouped per model.
+
+  function costModelRows(costs) {
+    var rows = []
+    var map = costs || {}
+    for (var model in map) {
+      rows.push({ name: usage.friendlyModelName(model), cost: Number(map[model] || 0) })
+    }
+    rows.sort(function(a, b) { return b.cost - a.cost })
+    return rows
+  }
+
+  function costGroupPeak(rows) {
+    var peak = 0
+    for (var i = 0; i < rows.length; i++) peak = Math.max(peak, Number(rows[i].cost || 0))
+    return peak
+  }
+
+  readonly property var todayCostModels: costModelRows(provider ? provider.todayCostsByModel : null)
+  readonly property var todayCostPeak: costGroupPeak(todayCostModels)
+  readonly property var weekCostModels: costModelRows(provider ? provider.weekCostsByModel : null)
+  readonly property var weekCostPeak: costGroupPeak(weekCostModels)
+  readonly property bool hasCostByModelData: provider && provider.weekCostsByModel !== undefined
+
   function balanceDetailText(b) {
     if (!b || !(b.funded > 0)) return ""
     var text = formatMoney(b.spent, b.currency) + " spent of " + formatMoney(b.funded, b.currency) + " funded"
@@ -1835,6 +1863,77 @@ Panel {
             }
           }
 
+          // ---------- Cost by model: today + trailing week ----------
+          // Green meters scaled to each period's leader — the same
+          // scale-to-leader rule the token bars follow, priced from the
+          // collector's transcript estimates.
+          PanelSeparator {
+            visible: costByModelSection.visible
+            foreground: root.foreground
+          }
+
+          BorderSurface {
+            id: costByModelSection
+            visible: root.expanded && root.hasCostByModelData
+              && (root.todayCostModels.length > 0 || root.weekCostModels.length > 0)
+            width: parent.width
+            implicitHeight: costByModelContent.implicitHeight + Style.space(28)
+            color: root.alpha(root.foreground, 0.035)
+            borderSpec: Border.flat(root.alpha(root.foreground, 0.12), 1)
+            radius: Style.cornerRadius
+
+            Column {
+              id: costByModelContent
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              anchors.leftMargin: Style.space(14)
+              anchors.rightMargin: Style.space(14)
+              spacing: Style.space(14)
+
+              PanelSectionHeader {
+                width: parent.width
+                text: "Cost by model"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
+
+              Repeater {
+                model: [
+                  { title: "TODAY", rows: root.todayCostModels, peak: root.todayCostPeak },
+                  { title: "WEEK", rows: root.weekCostModels, peak: root.weekCostPeak }
+                ]
+
+                Column {
+                  required property var modelData
+                  width: parent.width
+                  spacing: Style.space(8)
+
+                  Text {
+                    width: parent.width
+                    text: modelData.title
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                  }
+
+                  Repeater {
+                    model: modelData.rows
+
+                    CostByModelRow {
+                      required property var modelData
+                      width: parent.width
+                      label: modelData.name
+                      share: modelData.cost / Math.max(0.0000001, modelData.peak)
+                      valueText: root.formatMoney(modelData.cost)
+                    }
+                  }
+                }
+              }
+            }
+          }
+
           // ---------- Usage ----------
           PanelSeparator {
             visible: usageSection.visible
@@ -2923,6 +3022,64 @@ Panel {
       visible: modelHover.containsMouse
       text: root.modelTooltip(modelRow.row)
       fontFamily: root.fontFamily
+    }
+  }
+
+  // Green per-model cost bar: label left, meter behind, USD right. Mirrors
+  // the day-row cost bars but grouped per model instead of per day.
+  component CostByModelRow: Item {
+    id: costRow
+    property string label: ""
+    property real share: 0
+    property string valueText: ""
+
+    implicitHeight: Math.max(nameText.implicitHeight, costBar.implicitHeight)
+
+    Text {
+      id: nameText
+      text: costRow.label
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.bodySmall
+      elide: Text.ElideRight
+      anchors.left: parent.left
+      anchors.verticalCenter: parent.verticalCenter
+      width: parent.width - costUsd.width - Style.space(16)
+    }
+
+    Rectangle {
+      id: costBar
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      width: Style.space(110)
+      height: Style.space(8)
+      radius: height / 2
+      color: root.track
+
+      Rectangle {
+        anchors.left: parent.left
+        anchors.verticalCenter: parent.verticalCenter
+        height: parent.height
+        radius: parent.radius
+        width: parent.width * root.clamp(costRow.share, 0, 1)
+        color: "#74C476"
+
+        Behavior on width {
+          NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
+        }
+      }
+    }
+
+    Text {
+      id: costValueText
+      text: costRow.valueText
+      color: root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      font.bold: true
+      anchors.right: costBar.left
+      anchors.rightMargin: Style.space(10)
+      anchors.verticalCenter: costBar.verticalCenter
     }
   }
 }

@@ -90,6 +90,8 @@ def scan_pi_sessions(rates: dict[str, tuple[float, float, float, float]]) -> dic
     recent = {day: {"date": day, "messageCount": 0, "cost": 0.0} for day in recent_dates}
     today_tokens_by_model: dict[str, int] = {}
     today_costs_by_model: dict[str, float] = {}
+    daily_costs_by_model: dict[str, dict[str, float]] = {}
+    week_tokens_by_model: dict[str, int] = {}
     model_usage: dict[str, dict[str, int]] = {}
     week_costs_by_model: dict[str, float] = {}
     today_sessions: set[str] = set()
@@ -173,6 +175,9 @@ def scan_pi_sessions(rates: dict[str, tuple[float, float, float, float]]) -> dic
                 if day in recent:
                     recent[day]["messageCount"] += total_tokens
                     recent[day]["cost"] = round(recent[day].get("cost", 0.0) + cost, 6)
+                    week_tokens_by_model[model] = week_tokens_by_model.get(model, 0) + total_tokens
+                    day_models = daily_costs_by_model.setdefault(day, {})
+                    day_models[model] = round(day_models.get(model, 0.0) + cost, 6)
 
                 if day == today:
                     today_prompts += 1
@@ -199,6 +204,8 @@ def scan_pi_sessions(rates: dict[str, tuple[float, float, float, float]]) -> dic
         "activeDates": sorted(active_days),
         "modelUsage": model_usage,
         "weekCostsByModel": week_costs_by_model,
+        "weekTokensByModel": week_tokens_by_model,
+        "dailyCostsByModel": daily_costs_by_model,
     }
 
 
