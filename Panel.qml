@@ -544,6 +544,8 @@ Panel {
       ? String(day.date)
       : dayName(day.date) + " " + (parsed.getMonth() + 1) + "/" + parsed.getDate()
     var text = label + " · " + usage.formatTokenCount(Number(day.messageCount || 0)) + " tokens"
+    if (day.cost !== undefined)
+      text += " · ~" + root.formatMoney(Number(day.cost || 0)) + " spent"
     // Prompt and session counts only exist for today, so they ride along here
     // instead of taking a section of their own. Billing-API agents never
     // count prompts, and "0 prompts" would read as a quiet day, not a gap.
@@ -2806,7 +2808,14 @@ Panel {
 
     Text {
       id: dayValue
-      text: usage.formatTokenCount(dayRow.day ? Number(dayRow.day.messageCount || 0) : 0)
+      text: {
+        if (!dayRow.day) return ""
+        var tokens = usage.formatTokenCount(Number(dayRow.day.messageCount || 0))
+        // Collectors that price their transcripts (openrouter) land a per-day
+        // "cost" on the record; token-only collectors stay unchanged.
+        if (dayRow.day.cost === undefined) return tokens
+        return tokens + "/" + root.formatMoney(Number(dayRow.day.cost || 0))
+      }
       color: dayRow.today ? root.foreground : root.dim
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
@@ -2814,7 +2823,7 @@ Panel {
       horizontalAlignment: Text.AlignRight
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
-      width: Style.space(52)
+      width: Style.space(76)
     }
 
     MouseArea {

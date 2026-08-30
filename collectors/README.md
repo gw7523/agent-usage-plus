@@ -9,7 +9,7 @@ the panel already watches.
 
 | Provider | What the collector reads | First-class credential state |
 |---|---|---|
-| OpenRouter | current API key's optional spending limit, remaining budget, and usage from `GET /api/v1/auth/key` | `OPENROUTER_API_KEY` or `collectors.json` entry; otherwise **Waiting for API key** tells the user exactly how to set one |
+| OpenRouter | current API key's optional spending limit, remaining budget, and usage from `GET /api/v1/auth/key`, with a fallback to the account prepaid-credit ledger (`GET /api/v1/credits`) for keys without a spending limit; plus pi-session transcript token history and by-day/by-model API-cost estimates priced from OpenRouter's public catalogue | `OPENROUTER_API_KEY` or `collectors.json` entry; otherwise **Waiting for API key** tells the user exactly how to set one |
 | DeepSeek | account's available credit ledger from `GET /user/balance` | `DEEPSEEK_API_KEY` or `collectors.json` entry; otherwise **Waiting for API key** tells the user exactly how to set one |
 | xAI / Grok | team's authoritative prepaid API-credit balance from xAI's Management API | `XAI_MANAGEMENT_API_KEY` (not an inference `XAI_API_KEY`); team-scoped keys discover the team automatically, organization keys also need `XAI_TEAM_ID` |
 | Z.AI / GLM | Coding Plan quota windows from the read-only monitor endpoint (`/api/monitor/usage/quota/limit`), with global and China-region hosts and optional team scope | `Z_AI_API_KEY`/`ZAI_API_KEY` or a China-region alias (`BIGMODEL_API_KEY`, `ZHIPU_API_KEY`, `ZHIPUAI_API_KEY`, `GLM_API_KEY`); missing key, invalid region/scope, missing team selectors, rejected key, and endpoint failures are separate visible states |
