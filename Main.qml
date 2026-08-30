@@ -404,6 +404,10 @@ Item {
   // threshold-crossing watch and the notify-send dispatch queue.
   readonly property bool notificationsEnabled: booleanSetting("notificationsEnabled", false)
 
+  // Cost by model (today/week sections) — on by default; the toggle lives
+  // in the panel's Settings row below.
+  readonly property bool costByModelEnabled: booleanSetting("costByModelEnabled", true)
+
   readonly property var showInBarList: Aggregate.selectBarProviders(enabledProviders, settings)
   readonly property var barLayout: Aggregate.selectBarLayout(
     enabledProviders, settings, legacyCycleMode ? "legacy-cycle" : "roles",
@@ -578,6 +582,10 @@ Item {
 
   function setNotificationsEnabled(value) {
     writeSetting("notificationsEnabled", JSON.stringify(!!value))
+  }
+
+  function setCostByModelEnabled(value) {
+    writeSetting("costByModelEnabled", JSON.stringify(!!value))
   }
 
   function setProviderBarRole(id, value) {

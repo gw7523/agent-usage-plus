@@ -1874,7 +1874,7 @@ Panel {
 
           BorderSurface {
             id: costByModelSection
-            visible: root.expanded && root.hasCostByModelData
+            visible: root.expanded && root.hasCostByModelData && root.costByModelEnabled
               && (root.todayCostModels.length > 0 || root.weekCostModels.length > 0)
             width: parent.width
             implicitHeight: costByModelContent.implicitHeight + Style.space(28)
@@ -2731,6 +2731,28 @@ Panel {
                     onClicked: root.sendTestNotification()
                   }
                 }
+
+                // Cost by model (today + week API estimates) — on by
+                // default. Hides the two cost sections in Details.
+                Row {
+                  spacing: Style.space(10)
+
+                  ToggleSwitch {
+                    anchors.verticalCenter: parent.verticalCenter
+                    checked: usage.costByModelEnabled
+                    foreground: root.foreground
+                    accent: Color.accent
+                    onToggled: usage.setCostByModelEnabled(!usage.costByModelEnabled)
+                  }
+
+                  Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Cost by model (today + week API estimates)"
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                  }
+                }
               }
             }
           }
@@ -3044,7 +3066,7 @@ Panel {
       elide: Text.ElideRight
       anchors.left: parent.left
       anchors.verticalCenter: parent.verticalCenter
-      width: parent.width - costUsd.width - Style.space(16)
+      width: parent.width - costValueText.width - Style.space(16)
     }
 
     Rectangle {
