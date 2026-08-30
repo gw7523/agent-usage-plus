@@ -4,11 +4,17 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Changed
+
+- Moved estimated API cost out of the compact view and into a Details-only
+  analytics section with provider comparison, price coverage, model spend
+  bars, and an optional daily estimate chart.
+
 ### Fixed
 
-- Restored the estimated API cost card without null-binding errors when a
-  collector has no cost data; the card now shows its estimate window and
-  clearly marks partial totals.
+- The token-by-model table no longer repeats API prices or displays partial
+  cost warnings in yellow; partial estimates are disclosed once in neutral
+  text without null-binding errors when a collector has no cost data.
 
 ## [2.1.0] - 2026-08-28
 

@@ -54,7 +54,15 @@ Without that amount, the balance section is intentionally omitted rather than pr
 
 ## Cost estimate is absent or differs from a bill
 
-`Estimated API cost` appears only when the collector supplies a `cost` block. It is a token-derived estimate at the collector's published API price list, not an invoice, subscription charge, tax calculation, or account balance. Check the selected provider and record timestamp before comparing it with a vendor bill; cached reads, non-token charges, or a changed price list can differ.
+`Estimated API cost` appears in Details only, when the collector supplies a
+`cost` block; compact view intentionally stays focused on subscription status.
+Details also compares providers and shows model bars, while the daily chart is
+shown only when `byDay` data is available. It is a token-derived estimate at
+the collector's published API price list, not an invoice, subscription charge,
+tax calculation, or account balance. Check the selected provider and record
+timestamp before comparing it with a vendor bill; cached reads, non-token
+charges, or a changed price list can differ. A partial estimate names the
+models excluded from the subtotal once, in neutral text.
 
 ## The panel looks unchanged after editing QML
 

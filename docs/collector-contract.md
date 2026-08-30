@@ -205,9 +205,12 @@ Like `limits` and `balance`, `cost` is per-account and is never merged or
 summed across synced devices — the panel always reads it straight off the
 selected device's own record.
 
-The panel already renders an "Estimated API cost" card whenever a record
-includes a valid `cost` block, shows `period` next to its heading when
-provided, and renders nothing extra when it is absent. A
+The panel renders the "Estimated API cost" analytics in the expanded Details
+view whenever a record includes a valid `cost` block, shows `period` next to
+its heading when provided, compares all enabled providers with valid cost
+data, and renders nothing extra in the compact view or when the block is
+absent. `byModel` powers the model spend bars and `byDay`, when present,
+powers the daily chart; both are optional. A
 collector that computes it must identify the price-list version/source in
 its own documentation and must never present the estimate as a provider
 invoice. The supported companion collectors package lives in this repository
