@@ -38,6 +38,8 @@ Icons currently shipped:
 | `kimi` | `kimi.svg`, `kimi-light.svg` |
 | `xai` | `xai.svg`, `xai-light.svg` |
 | `zai` | `zai.svg`, `zai-light.svg` |
+| `opencode` | `opencode.svg`, `opencode-light.svg` |
+| `devin` | `devin.svg` |
 | `opencode-go` | `opencode-go.svg`, `opencode-go-light.svg` |
 
 All currently supported providers have a registered mark. A future provider
