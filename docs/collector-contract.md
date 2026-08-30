@@ -205,8 +205,9 @@ Like `limits` and `balance`, `cost` is per-account and is never merged or
 summed across synced devices — the panel always reads it straight off the
 selected device's own record.
 
-The panel already renders an "Est. API cost" row whenever a record includes
-a valid `cost` block, and renders nothing extra when it is absent. A
+The panel already renders an "Estimated API cost" card whenever a record
+includes a valid `cost` block, shows `period` next to its heading when
+provided, and renders nothing extra when it is absent. A
 collector that computes it must identify the price-list version/source in
 its own documentation and must never present the estimate as a provider
 invoice. The supported companion collectors package lives in this repository

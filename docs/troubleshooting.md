@@ -54,7 +54,7 @@ Without that amount, the balance section is intentionally omitted rather than pr
 
 ## Cost estimate is absent or differs from a bill
 
-`EST. API COST` appears only when the collector supplies a `cost` block. It is a token-derived estimate at the collector's published API price list, not an invoice, subscription charge, tax calculation, or account balance. Check the selected provider and record timestamp before comparing it with a vendor bill; cached reads, non-token charges, or a changed price list can differ.
+`Estimated API cost` appears only when the collector supplies a `cost` block. It is a token-derived estimate at the collector's published API price list, not an invoice, subscription charge, tax calculation, or account balance. Check the selected provider and record timestamp before comparing it with a vendor bill; cached reads, non-token charges, or a changed price list can differ.
 
 ## The panel looks unchanged after editing QML
 

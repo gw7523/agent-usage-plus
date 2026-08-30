@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Fixed
+
+- Restored the estimated API cost card without null-binding errors when a
+  collector has no cost data; the card now shows its estimate window and
+  clearly marks partial totals.
+
 ## [2.1.0] - 2026-08-28
 
 ### Added

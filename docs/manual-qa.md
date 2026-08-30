@@ -33,7 +33,7 @@ Automated tests cover extracted logic and record validation. They cannot show cl
 - [ ] A pace subtitle appears only for a real token quota with a rising
   multi-day history that would exhaust before reset; it stays absent for one
   day, flat, decreasing, percentage-only, or reset-first data.
-- [ ] `r` and Enter refresh, `j`/`k` scroll, Tab moves to the neighbouring panel, and Esc closes. Tab can focus the gear, expansion chevron, and cost disclosure; Enter, Space, and Return activate each.
+- [ ] `r` and Enter refresh, `j`/`k` scroll, Tab moves to the neighbouring panel, and Esc closes. Tab can focus the gear and expansion chevron; Enter, Space, and Return activate each.
 
 ## Settings
 

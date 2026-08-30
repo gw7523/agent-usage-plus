@@ -1857,7 +1857,7 @@ Panel {
 
               PanelSectionHeader {
                 width: parent.width
-                text: "Estimated API cost"
+                text: "Estimated API cost" + (root.cost && root.cost.period ? " (" + root.cost.period + ")" : "")
                 foreground: root.foreground
                 fontFamily: root.fontFamily
               }
@@ -1868,7 +1868,7 @@ Panel {
 
                 Text {
                   id: costLabel
-                  text: root.cost.incomplete ? "Partial API estimate" : "API-rate equivalent"
+                  text: root.cost && root.cost.incomplete ? "Partial API estimate" : "API-rate equivalent"
                   color: root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
@@ -1881,7 +1881,7 @@ Panel {
 
                 Text {
                   id: costValue
-                  text: root.formatUsd(root.cost.estimateUsd)
+                  text: root.cost ? root.formatUsd(root.cost.estimateUsd) : ""
                   textFormat: Text.PlainText
                   color: root.foreground
                   font.family: root.fontFamily
@@ -1895,11 +1895,13 @@ Panel {
               Text {
                 visible: text !== ""
                 width: parent.width
-                text: root.cost.incomplete
+                text: root.cost && root.cost.incomplete
                   ? root.unpricedModelText(root.cost)
-                  : "Based on recorded tokens and published API rates; not subscription billing."
+                  : root.cost
+                    ? "Based on recorded tokens and published API rates; not subscription billing."
+                    : ""
                 textFormat: Text.PlainText
-                color: root.cost.incomplete ? root.warn : root.dim
+                color: root.cost && root.cost.incomplete ? root.warn : root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
                 wrapMode: Text.WordWrap
