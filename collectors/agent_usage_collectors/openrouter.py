@@ -92,6 +92,9 @@ def scan_pi_sessions(rates: dict[str, tuple[float, float, float, float]]) -> dic
     today_costs_by_model: dict[str, float] = {}
     daily_costs_by_model: dict[str, dict[str, float]] = {}
     week_tokens_by_model: dict[str, int] = {}
+    unknown_models: set[str] = set()
+    priced_tokens = 0
+    unpriced_tokens = 0
     model_usage: dict[str, dict[str, int]] = {}
     week_costs_by_model: dict[str, float] = {}
     today_sessions: set[str] = set()
@@ -149,17 +152,26 @@ def scan_pi_sessions(rates: dict[str, tuple[float, float, float, float]]) -> dic
                     continue
 
                 model = model_name(message.get("model"))
-                prompt_rate, completion_rate, cache_read_rate, cache_write_rate = rates.get(
-                    model, rates.get(model.split(":")[0], (0.0, 0.0, 0.0, 0.0))
-                )
+                # The catalogue is the price authority: an exact id match is
+                # priced (even at a published $0); a model the catalogue
+                # doesn't list is unpriced, never folded into a $0 subtotal.
+                # The ":"-variant base id is tried so e.g. "model:free"
+                # entries price against their base listing.
+                catalogue_entry = rates.get(model) or rates.get(model.split(":")[0])
+                priced = catalogue_entry is not None
+                prompt_rate, completion_rate, cache_read_rate, cache_write_rate = catalogue_entry or (0.0, 0.0, 0.0, 0.0)
                 cost = (
                     input_tokens * prompt_rate
                     + output_tokens * completion_rate
                     + cache_read * cache_read_rate
                     + cache_write * cache_write_rate
                 )
-
                 total_tokens = input_tokens + output_tokens + cache_read + cache_write
+                if not priced:
+                    unknown_models.add(model)
+                    unpriced_tokens += total_tokens
+                else:
+                    priced_tokens += total_tokens
                 day = local_day(entry.get("timestamp") or message.get("timestamp"))
                 bucket = model_usage.setdefault(model, {
                     "inputTokens": 0,
@@ -213,6 +225,9 @@ def scan_pi_sessions(rates: dict[str, tuple[float, float, float, float]]) -> dic
         "weekCostsByModel": week_costs_by_model,
         "weekTokensByModel": week_tokens_by_model,
         "dailyCostsByModel": daily_costs_by_model,
+        "pricedTokens": priced_tokens,
+        "unpricedTokens": unpriced_tokens,
+        "unknownModels": sorted(unknown_models)[:20],
     }
 
 
@@ -352,16 +367,17 @@ def collect() -> dict[str, Any]:
     # the catalogue is unpriced, never invented as $0.
     week_costs = stats.get("weekCostsByModel") or {}
     model_usage = stats.get("modelUsage") or {}
-    if week_costs:
+    if week_costs and stats.get("pricedTokens", 0) > 0:
+        # Priced tokens exist: publish the estimate. Models the catalogue
+        # doesn't list are excluded (named in unknownModels), and the block
+        # is marked partial rather than folding them into a $0 subtotal.
         by_model = []
-        priced_tokens = 0
         for model, cost in sorted(week_costs.items(), key=lambda kv: -kv[1]):
             bucket = model_usage.get(model) or {}
             tokens = sum(token_count(bucket.get(key)) for key in (
                 "inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"
             ))
             by_model.append({"model": model, "usd": round(cost, 2), "tokens": tokens})
-            priced_tokens += tokens
         by_day = [
             {"date": day.get("date") if isinstance(day, dict) else str(day),
              "usd": round(float(day.get("cost") or 0.0), 2)}
@@ -372,10 +388,11 @@ def collect() -> dict[str, Any]:
             "period": "7d",
             "byModel": by_model,
             "byDay": by_day,
-            "pricedTokens": priced_tokens,
-            "unpricedTokens": 0,
+            "pricedTokens": stats.get("pricedTokens"),
+            "unpricedTokens": stats.get("unpricedTokens"),
             "pricingVersion": pricing_version,
-            "incomplete": False,
+            "incomplete": bool(stats.get("unknownModels")),
+            "unknownModels": sorted(stats.get("unknownModels", []))[:20],
         }
 
     key = find_key("OPENROUTER_API_KEY", "openrouter")
