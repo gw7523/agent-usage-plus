@@ -88,7 +88,7 @@ def scan_pi_sessions(rates: dict[str, tuple[float, float, float, float]]) -> dic
     today = now.strftime("%Y-%m-%d")
     recent_dates = [(now - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(HISTORY_DAYS - 1, -1, -1)]
     recent = {day: {"date": day, "messageCount": 0, "cost": 0.0} for day in recent_dates}
-    today_tokens_by_model: dict[str, int] = {}
+    today_tokens_by_model: dict[str, dict[str, int]] = {}
     today_costs_by_model: dict[str, float] = {}
     daily_costs_by_model: dict[str, dict[str, float]] = {}
     week_tokens_by_model: dict[str, int] = {}
@@ -183,7 +183,14 @@ def scan_pi_sessions(rates: dict[str, tuple[float, float, float, float]]) -> dic
                     today_prompts += 1
                     today_sessions.add(message_key)
                     today_total_tokens += total_tokens
-                    today_tokens_by_model[model] = today_tokens_by_model.get(model, 0) + total_tokens
+                    today_bucket = today_tokens_by_model.setdefault(model, {
+                        "inputTokens": 0, "outputTokens": 0,
+                        "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0,
+                    })
+                    today_bucket["inputTokens"] += input_tokens
+                    today_bucket["outputTokens"] += output_tokens
+                    today_bucket["cacheReadInputTokens"] += cache_read
+                    today_bucket["cacheCreationInputTokens"] += cache_write
                     today_costs_by_model[model] = round(today_costs_by_model.get(model, 0.0) + cost, 6)
 
                 total_prompts += 1

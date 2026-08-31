@@ -425,26 +425,22 @@ Panel {
   // green cost meters scaled to each group's leader, mirroring the day-row
   // cost bars but grouped per model.
 
-  function costModelRows(costs) {
+  function costModelRows(costs, usageByModel) {
     var rows = []
     var map = costs || {}
+    var buckets = usageByModel || {}
     for (var model in map) {
-      rows.push({ name: usage.friendlyModelName(model), cost: Number(map[model] || 0) })
+      var bucket = buckets[model] || {}
+      var total = Number(bucket.inputTokens || 0) + Number(bucket.outputTokens || 0)
+        + Number(bucket.cacheReadInputTokens || 0) + Number(bucket.cacheCreationInputTokens || 0)
+      rows.push({ id: model, name: usage.friendlyModelName(model), total: total, apiCost: Number(map[model] || 0) })
     }
-    rows.sort(function(a, b) { return b.cost - a.cost })
+    rows.sort(function(a, b) { return b.apiCost - a.apiCost })
     return rows
   }
 
-  function costGroupPeak(rows) {
-    var peak = 0
-    for (var i = 0; i < rows.length; i++) peak = Math.max(peak, Number(rows[i].cost || 0))
-    return peak
-  }
-
   readonly property var todayCostModels: costModelRows(provider ? provider.todayCostsByModel : null)
-  readonly property var todayCostPeak: costGroupPeak(todayCostModels)
   readonly property var weekCostModels: costModelRows(provider ? provider.weekCostsByModel : null)
-  readonly property var weekCostPeak: costGroupPeak(weekCostModels)
   readonly property bool hasCostByModelData: provider && provider.weekCostsByModel !== undefined
 
   function balanceDetailText(b) {
@@ -1900,8 +1896,8 @@ Panel {
 
               Repeater {
                 model: [
-                  { title: "TODAY", rows: root.todayCostModels, peak: root.todayCostPeak },
-                  { title: "WEEK", rows: root.weekCostModels, peak: root.weekCostPeak }
+                  { title: "TODAY", rows: root.todayCostModels },
+                  { title: "WEEK", rows: root.weekCostModels }
                 ]
 
                 Column {
@@ -1921,12 +1917,12 @@ Panel {
                   Repeater {
                     model: modelData.rows
 
-                    CostByModelRow {
+                    ModelRow {
                       required property var modelData
                       width: parent.width
-                      label: modelData.name
-                      share: modelData.cost / Math.max(0.0000001, modelData.peak)
-                      valueText: root.formatMoney(modelData.cost)
+                      row: modelData
+                      share: modelData.total / Math.max(1, modelData.peak)
+                      apiCost: modelData.apiCost
                     }
                   }
                 }
@@ -3047,61 +3043,5 @@ Panel {
     }
   }
 
-  // Green per-model cost bar: label left, meter behind, USD right. Mirrors
-  // the day-row cost bars but grouped per model instead of per day.
-  component CostByModelRow: Item {
-    id: costRow
-    property string label: ""
-    property real share: 0
-    property string valueText: ""
 
-    implicitHeight: Math.max(nameText.implicitHeight, costBar.implicitHeight)
-
-    Text {
-      id: nameText
-      text: costRow.label
-      color: root.foreground
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.bodySmall
-      elide: Text.ElideRight
-      anchors.left: parent.left
-      anchors.verticalCenter: parent.verticalCenter
-      width: parent.width - costValueText.width - Style.space(16)
-    }
-
-    Rectangle {
-      id: costBar
-      anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
-      width: Style.space(110)
-      height: Style.space(8)
-      radius: height / 2
-      color: root.track
-
-      Rectangle {
-        anchors.left: parent.left
-        anchors.verticalCenter: parent.verticalCenter
-        height: parent.height
-        radius: parent.radius
-        width: parent.width * root.clamp(costRow.share, 0, 1)
-        color: "#74C476"
-
-        Behavior on width {
-          NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
-        }
-      }
-    }
-
-    Text {
-      id: costValueText
-      text: costRow.valueText
-      color: root.dim
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.caption
-      font.bold: true
-      anchors.right: costBar.left
-      anchors.rightMargin: Style.space(10)
-      anchors.verticalCenter: costBar.verticalCenter
-    }
-  }
 }
