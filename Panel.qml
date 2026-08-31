@@ -425,22 +425,31 @@ Panel {
   // green cost meters scaled to each group's leader, mirroring the day-row
   // cost bars but grouped per model.
 
+  function token_count(value) {
+    var n = Number(value)
+    return isFinite(n) && n > 0 ? Math.round(n) : 0
+  }
+
   function costModelRows(costs, usageByModel) {
     var rows = []
     var map = costs || {}
     var buckets = usageByModel || {}
     for (var model in map) {
       var bucket = buckets[model] || {}
-      var total = Number(bucket.inputTokens || 0) + Number(bucket.outputTokens || 0)
-        + Number(bucket.cacheReadInputTokens || 0) + Number(bucket.cacheCreationInputTokens || 0)
-      rows.push({ id: model, name: usage.friendlyModelName(model), total: total, apiCost: Number(map[model] || 0) })
+      var input_tokens = token_count(bucket.inputTokens)
+      var output_tokens = token_count(bucket.outputTokens)
+      var cache_read = token_count(bucket.cacheReadInputTokens)
+      var cache_write = token_count(bucket.cacheCreationInputTokens)
+      var total = input_tokens + output_tokens + cache_read + cache_write
+      rows.push({ id: model, name: usage.friendlyModelName(model), total: total, apiCost: Number(map[model] || 0),
+        input: input_tokens, output: output_tokens, cacheRead: cache_read, cacheWrite: cache_write })
     }
     rows.sort(function(a, b) { return b.apiCost - a.apiCost })
     return rows
   }
 
-  readonly property var todayCostModels: costModelRows(provider ? provider.todayCostsByModel : null)
-  readonly property var weekCostModels: costModelRows(provider ? provider.weekCostsByModel : null)
+  readonly property var todayCostModels: costModelRows(provider ? provider.todayCostsByModel : null, provider ? provider.todayTokensByModel : null)
+  readonly property var weekCostModels: costModelRows(provider ? provider.weekCostsByModel : null, provider ? provider.modelUsage : null)
   readonly property bool hasCostByModelData: provider && provider.weekCostsByModel !== undefined
 
   function balanceDetailText(b) {
@@ -1868,9 +1877,23 @@ Panel {
             foreground: root.foreground
           }
 
+          // TEMP DEBUG — remove after confirming the cost-by-model gate
+          Text {
+            visible: root.expanded
+            width: parent.width
+            text: "DBG has=" + root.hasCostByModelData
+              + " enabled=" + usage.costByModelEnabled
+              + " tRows=" + root.todayCostModels.length
+              + " wRows=" + root.weekCostModels.length
+            color: root.warn
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+
           BorderSurface {
             id: costByModelSection
-            visible: root.expanded && root.hasCostByModelData && root.costByModelEnabled
+            visible: root.expanded && root.hasCostByModelData && usage.costByModelEnabled
               && (root.todayCostModels.length > 0 || root.weekCostModels.length > 0)
             width: parent.width
             implicitHeight: costByModelContent.implicitHeight + Style.space(28)
