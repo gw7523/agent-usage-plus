@@ -105,3 +105,19 @@ test("providerRows keeps every provider and separates plan usage from API estima
   assert.ok(Math.abs(rows[2].balanceUsedPercent - 0.15) < 1e-9)
   assert.equal(rows[2].incomplete, true)
 })
+
+test("providerRows reports usageKind 'none' for a cost-only provider with no limits or balance", () => {
+  const rows = CostAnalytics.providerRows([
+    {
+      providerId: "openrouter",
+      providerName: "OpenRouter",
+      cost: { estimateUsd: 4.2, incomplete: false },
+    },
+  ])
+
+  assert.equal(rows[0].usageKind, "none")
+  assert.equal(rows[0].usageTitle, "Usage")
+  assert.equal(rows[0].usagePercent, -1)
+  assert.equal(rows[0].hasCost, true)
+  assert.equal(rows[0].estimateUsd, 4.2)
+})
