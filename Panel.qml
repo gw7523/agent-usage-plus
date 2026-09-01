@@ -224,6 +224,9 @@ Panel {
       rows.push({
         providerId: id,
         providerName: String(record.name || record.id),
+        // ProviderMark resolves brand-first; without this a branded account
+        // record shows its real mark everywhere except the settings list.
+        brand: Aggregate.sanitizeBrand(record.brand),
         enabled: providerSettingEnabled(id),
         showInBar: providerSettingShowInBar(id),
         barRole: providerSettingBarRole(id),
@@ -671,7 +674,10 @@ Panel {
   // than trusted to have gone through the right upstream function.
   function iconCandidatesForProvider(p, surfaceColor) {
     if (!p) return []
-    var id = String(p.providerId || "")
+    // A record may declare a `brand` naming whose mark it renders with
+    // (e.g. a second `claude-work` account using the Claude mark); it went
+    // through sanitizeBrand upstream but is re-validated here like the id.
+    var id = String(p.brand || p.providerId || "")
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) return []
     var assets = root.providerIconAssets[id]
     if (!assets) return []
@@ -684,7 +690,10 @@ Panel {
 
   function iconCandidatesForBarProvider(p) {
     if (!p) return []
-    var id = String(p.providerId || "")
+    // A record may declare a `brand` naming whose mark it renders with
+    // (e.g. a second `claude-work` account using the Claude mark); it went
+    // through sanitizeBrand upstream but is re-validated here like the id.
+    var id = String(p.brand || p.providerId || "")
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) return []
     var assets = root.providerIconAssets[id]
     if (!assets) return []
@@ -704,7 +713,10 @@ Panel {
   // the rest of the set don't read as larger. See providerIconAssets.
   function iconScaleForProvider(p) {
     if (!p) return 1
-    var id = String(p.providerId || "")
+    // Same brand-first resolution as the candidate lookups: a branded
+    // account record must render at the exact same size as the provider it
+    // borrows the mark from, or two chips of one provider read as different.
+    var id = String(p.brand || p.providerId || "")
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) return 1
     var assets = root.providerIconAssets[id]
     var scale = assets ? Number(assets.scale) : 1

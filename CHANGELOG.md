@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- Optional `brand` record field: a record whose `id` isn't a bundled provider
+  id (e.g. a second account like `claude-work`) can declare `"brand":
+  "claude"` to render with that provider's mark in the bar and panel. This
+  makes multiple accounts of one provider first-class: each account is its
+  own record (own meters, own per-provider settings), branded correctly.
+  Sanitized like a provider id, carried through sync snapshots, validated by
+  `agent-usage-doctor`, and documented in the collector contract.
+
 ## [2.1.0] - 2026-08-28
 
 ### Added
