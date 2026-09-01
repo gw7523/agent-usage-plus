@@ -799,6 +799,38 @@ Panel {
     return pct >= 0 ? Format.formatPercent(pct) : "…"
   }
 
+  // Everything the bar chip compresses away, on hover: which account this
+  // is, its plan, every limit window with its reset countdown, and any
+  // credit balance. One line per fact, so multiple accounts of the same
+  // provider read apart without opening the panel.
+  function barProviderTooltip(p) {
+    if (!p) return ""
+    var lines = []
+    var head = String(p.providerName || p.providerId || "Provider")
+    if (p.tierLabel) head += " · " + String(p.tierLabel)
+    lines.push(head)
+    var windows = limitWindows(p)
+    for (var i = 0; i < windows.length; i++) {
+      var w = windows[i]
+      if (w.percent < 0) continue
+      var line = String(w.title || w.label || "Limit") + " " + Format.formatPercent(w.percent)
+      if (w.resetAt) {
+        var remainingMs = Date.parse(w.resetAt) - Date.now()
+        if (isFinite(remainingMs) && remainingMs > 0)
+          line += " · resets in " + Format.formatDuration(remainingMs)
+      }
+      lines.push(line)
+    }
+    var credit = p.balance || null
+    if (credit && Number(credit.remaining) >= 0) {
+      var creditLine = Format.formatMoney(Number(credit.remaining), credit.currency) + " left"
+      if (Number(credit.funded) > 0)
+        creditLine += " of " + Format.formatMoney(Number(credit.funded), credit.currency)
+      lines.push(creditLine)
+    }
+    return lines.join("\n")
+  }
+
   // The weekly percent, when the bar's already showing session as the
   // primary number — drawn as a tick on the same meter rather than a
   // second bar, so seeing both costs a couple of pixels, not double width.
@@ -1137,6 +1169,11 @@ Panel {
             }
             else root.openProvider(providerGroup.modelData)
           }
+          // The bar's own tooltip window, not a PanelToolTip: a QQC2 popup
+          // cannot escape the thin bar window, so multi-line content gets
+          // clipped to one line there. Bar.qml's PopupWindow self-sizes to
+          // the text and renders every line.
+          tooltipText: root.barProviderTooltip(providerGroup.modelData)
         }
       }
     }
