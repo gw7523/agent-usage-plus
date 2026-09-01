@@ -37,8 +37,14 @@ Icons currently shipped:
 | `cursor` | `cursor.svg`, `cursor-light.svg` |
 | `kimi` | `kimi.svg`, `kimi-light.svg` |
 | `xai` | `xai.svg`, `xai-light.svg` |
+| `grok` | `grok.svg`, `grok-light.svg` |
 | `zai` | `zai.svg`, `zai-light.svg` |
 | `opencode-go` | `opencode-go.svg`, `opencode-go-light.svg` |
+
+`grok` is a reserved id: xAI's Grok product mark, distinct from the corporate
+`xai` mark, for collectors (or brand-declaring account records) that want the
+product identity. The path is adapted from the MIT-licensed
+[lobe-icons](https://github.com/lobehub/lobe-icons) set.
 
 All currently supported providers have a registered mark. A future provider
 can still use the text-initial fallback, but its asset and exact registry
