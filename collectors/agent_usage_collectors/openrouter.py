@@ -90,8 +90,6 @@ def scan_pi_sessions(rates: dict[str, tuple[float, float, float, float]]) -> dic
     recent = {day: {"date": day, "messageCount": 0, "cost": 0.0} for day in recent_dates}
     today_tokens_by_model: dict[str, dict[str, int]] = {}
     today_costs_by_model: dict[str, float] = {}
-    daily_costs_by_model: dict[str, dict[str, float]] = {}
-    week_tokens_by_model: dict[str, int] = {}
     unknown_models: set[str] = set()
     priced_tokens = 0
     unpriced_tokens = 0
@@ -187,9 +185,7 @@ def scan_pi_sessions(rates: dict[str, tuple[float, float, float, float]]) -> dic
                 if day in recent:
                     recent[day]["messageCount"] += total_tokens
                     recent[day]["cost"] = round(recent[day].get("cost", 0.0) + cost, 6)
-                    week_tokens_by_model[model] = week_tokens_by_model.get(model, 0) + total_tokens
-                    day_models = daily_costs_by_model.setdefault(day, {})
-                    day_models[model] = round(day_models.get(model, 0.0) + cost, 6)
+                    week_costs_by_model[model] = round(week_costs_by_model.get(model, 0.0) + cost, 6)
 
                 if day == today:
                     today_prompts += 1
@@ -203,7 +199,6 @@ def scan_pi_sessions(rates: dict[str, tuple[float, float, float, float]]) -> dic
                     today_bucket["outputTokens"] += output_tokens
                     today_bucket["cacheReadInputTokens"] += cache_read
                     today_bucket["cacheCreationInputTokens"] += cache_write
-                    today_costs_by_model[model] = round(today_costs_by_model.get(model, 0.0) + cost, 6)
 
                 total_prompts += 1
                 total_sessions.add(message_key)
@@ -215,7 +210,6 @@ def scan_pi_sessions(rates: dict[str, tuple[float, float, float, float]]) -> dic
         "todaySessions": len(today_sessions),
         "todayTotalTokens": today_total_tokens,
         "todayTokensByModel": today_tokens_by_model,
-        "todayCostsByModel": today_costs_by_model,
         "recentDays": [recent[day] for day in recent_dates],
         "totalPrompts": total_prompts,
         "totalSessions": len(total_sessions),
@@ -223,8 +217,6 @@ def scan_pi_sessions(rates: dict[str, tuple[float, float, float, float]]) -> dic
         "activeDates": sorted(active_days),
         "modelUsage": model_usage,
         "weekCostsByModel": week_costs_by_model,
-        "weekTokensByModel": week_tokens_by_model,
-        "dailyCostsByModel": daily_costs_by_model,
         "pricedTokens": priced_tokens,
         "unpricedTokens": unpriced_tokens,
         "unknownModels": sorted(unknown_models)[:20],
