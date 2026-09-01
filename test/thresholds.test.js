@@ -93,3 +93,15 @@ test("notificationTransition: descending below a threshold rearms the next cross
     notification: "warn"
   })
 })
+
+test("worstSeverity: collapses several meter severities to the strictest", () => {
+  const T = require("../logic/thresholds.js")
+  assert.equal(T.worstSeverity("ok", "ok"), "ok")
+  assert.equal(T.worstSeverity("ok", "warn"), "warn")
+  assert.equal(T.worstSeverity("warn", "ok"), "warn")
+  assert.equal(T.worstSeverity("warn", "critical"), "critical")
+  assert.equal(T.worstSeverity("critical", "warn"), "critical")
+  // Unknown values normalise to ok instead of poisoning the fold.
+  assert.equal(T.worstSeverity(undefined, "warn"), "warn")
+  assert.equal(T.worstSeverity("nonsense", null), "ok")
+})
