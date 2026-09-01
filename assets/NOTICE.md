@@ -15,15 +15,10 @@ Simple Icons' documented brand color, the others this project's existing
 white/`#111111` scheme.
 
 `opencode-go.svg`/`opencode-go-light.svg` use the OpenCode logo from the
-official OpenCode brand assets, recolored into this project's dark/light
+official OpenCode brand assets for both the `opencode` and `opencode-go`
+provider IDs. The paths use a square 24px canvas and this project's dark/light
 variant convention (near-white `#F1ECEC` on dark surfaces, near-black
-`#211E1E` on light). The mask/clip definitions in the source export were
-no-ops over the full viewBox and have been removed; the mark paths are
-unchanged.
-
-`opencode.svg`/`opencode-light.svg` use the OpenCode mark from the
-`jagrat.agents` Omarchy plugin, normalized to Lobe Icons' crisp 24px path and
-recolored into this project's dark/light variant convention.
+`#211E1E` on light).
 
 `devin.svg` uses Lobe Icons' normalized color mark under its MIT license. Its
 three colors are Cognition's published Devin palette; square viewBox padding

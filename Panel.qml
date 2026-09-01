@@ -674,7 +674,7 @@ Panel {
     kimi: { defaultAsset: "kimi.svg", lightAsset: "kimi-light.svg" },
     xai: { defaultAsset: "xai.svg", lightAsset: "xai-light.svg" },
     zai: { defaultAsset: "zai.svg", lightAsset: "zai-light.svg" },
-    opencode: { defaultAsset: "opencode.svg", lightAsset: "opencode-light.svg" },
+    opencode: { defaultAsset: "opencode-go.svg", lightAsset: "opencode-go-light.svg" },
     devin: { defaultAsset: "devin.svg" },
     "opencode-go": { defaultAsset: "opencode-go.svg", lightAsset: "opencode-go-light.svg" }
   })
