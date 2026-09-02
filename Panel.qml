@@ -9,6 +9,8 @@ import "logic/format.js" as Format
 import "logic/aggregate.js" as Aggregate
 import "logic/history.js" as History
 import "logic/pace.js" as Pace
+import "logic/notifications.js" as Notify
+import "logic/meter-colors.js" as MeterColors
 
 Panel {
   id: root
@@ -18,6 +20,11 @@ Panel {
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color urgent: bar ? bar.urgent : Color.urgent
+  // The stable traffic-light colors are opt-in. With the option off, healthy
+  // meters retain the live foreground and Critical retains Omarchy's urgent
+  // color, preserving the widget's original theme contract.
+  readonly property color healthy: "#22C55E"
+  readonly property color colorfulCritical: "#EF4444"
   // A fixed amber rather than a foreground/urgent blend: warn needs to read
   // as its own distinct traffic-light color at a glance, not a paler shade
   // of critical that's easy to mistake for it against a dim theme.
@@ -140,6 +147,10 @@ Panel {
   // read straight from the manifest schema's defaults when unset.
   readonly property int warnThresholdPct: Number(usage.setting("warnThresholdPct", Thresholds.DEFAULT_WARN_PCT))
   readonly property int criticalThresholdPct: Number(usage.setting("criticalThresholdPct", Thresholds.DEFAULT_CRITICAL_PCT))
+  readonly property int displayWarnThresholdPct: usage.showAvailablePercentage
+    ? 100 - warnThresholdPct : warnThresholdPct
+  readonly property int displayCriticalThresholdPct: usage.showAvailablePercentage
+    ? 100 - criticalThresholdPct : criticalThresholdPct
   readonly property var severityThresholds: ({ warn: warnThresholdPct, critical: criticalThresholdPct })
 
   // ---------------------------------------------------------------- settings
@@ -253,8 +264,11 @@ Panel {
     return Thresholds.severityFor(percent * 100, root.severityThresholds)
   }
   function colorForSeverity(severity) {
-    if (severity === "critical") return root.urgent
-    if (severity === "warn") return root.warn
+    var role = MeterColors.paletteRole(severity, usage.colorfulUsageMeters)
+    if (role === "critical-red") return root.colorfulCritical
+    if (role === "critical") return root.urgent
+    if (role === "warn") return root.warn
+    if (role === "healthy") return root.healthy
     return root.foreground
   }
 
@@ -773,6 +787,11 @@ Panel {
     function toggle(): void { root.toggle() }
     function refresh(): string { root.refreshNow(); return "ok" }
     function next(): string { root.selectProvider(root.providerIndex + 1); return "ok" }
+    // Exposed for the same reason as refresh(): it gives diagnostics and
+    // release QA a deterministic path through the exact function the button
+    // calls, including its queue and visible result state.
+    function testNotification(): string { root.sendTestNotification(); return "queued" }
+    function notificationStatus(): string { return root.notificationTestStatus }
   }
 
   // The provider's primary window: session when it reports one (Claude),
@@ -796,7 +815,10 @@ Panel {
   function providerSeverity(p) { return root.severityForPercent(providerPercent(p)) }
   function providerPercentText(p) {
     var pct = providerPercent(p)
-    return pct >= 0 ? Format.formatPercent(pct) : "…"
+    return pct >= 0 ? Format.formatPercent(pct, usage.showAvailablePercentage) : "…"
+  }
+  function displayPercent(percent) {
+    return Format.displayPercent(percent, usage.showAvailablePercentage)
   }
 
   // The weekly percent, when the bar's already showing session as the
@@ -832,8 +854,17 @@ Panel {
     target: usage
     function onNotificationsEnabledChanged() {
       if (usage.notificationsEnabled) root.checkThresholdNotifications()
-      else root.notificationQueue = []
+      else root.discardQueuedThresholdNotifications()
     }
+  }
+
+  function discardQueuedThresholdNotifications() {
+    var tests = []
+    for (var i = 0; i < root.notificationQueue.length; i++) {
+      var entry = root.notificationQueue[i]
+      if (entry && entry.isTest === true) tests.push(entry)
+    }
+    root.notificationQueue = tests
   }
 
   function notificationSignal(p) {
@@ -868,13 +899,18 @@ Panel {
 
   property var notificationQueue: []
   property bool notificationRunning: false
+  property bool activeNotificationIsTest: false
+  property string notificationTestStatus: ""
 
   Process {
     id: notifyProcess
     running: false
     onExited: function(exitCode) {
+      if (root.activeNotificationIsTest)
+        root.notificationTestStatus = exitCode === 0 ? "Sent" : "Failed"
       if (exitCode !== 0)
-        console.warn("agents/notify", "notify-send failed:", notifyProcess.command.join(" "))
+        console.warn("agents/notify", "notification command failed:", notifyProcess.command.join(" "))
+      root.activeNotificationIsTest = false
       root.notificationRunning = false
       root.pumpNotificationQueue()
     }
@@ -885,12 +921,16 @@ Panel {
     }
   }
 
-  // A manual, always-available way to confirm the notify-send pipeline
+  // A manual, always-available way to confirm Omarchy's notification pipeline
   // itself works — independent of notificationsEnabled and of waiting for a
   // real Warn/Critical crossing, which may be rare or slow to hit.
   function sendTestNotification() {
-    root.notificationQueue.push(["notify-send", "--app-name=Agent Usage Plus", "--urgency=normal",
-      "Agent Usage Plus", "Test notification — if you see this, notifications are working."])
+    root.notificationTestStatus = root.notificationRunning ? "Queued…" : "Sending…"
+    root.notificationQueue.push({
+      command: Notify.command("Agent Usage Plus",
+        "Test notification — if you see this, notifications are working.", "normal"),
+      isTest: true
+    })
     root.pumpNotificationQueue()
   }
 
@@ -900,7 +940,11 @@ Panel {
     var urgency = severity === "critical" ? "critical" : "normal"
     var summary = name + " — " + (severity === "critical" ? "critical" : "warning")
     var body = signal.title + " at " + pct
-    root.notificationQueue.push(["notify-send", "--app-name=Agent Usage Plus", "--urgency=" + urgency, summary, body])
+      + (usage.showAvailablePercentage ? " available" : " used")
+    root.notificationQueue.push({
+      command: Notify.command(summary, body, urgency),
+      isTest: false
+    })
     root.pumpNotificationQueue()
   }
 
@@ -908,8 +952,11 @@ Panel {
     if (root.notificationRunning) return
     if (root.notificationQueue.length === 0) return
     var next = root.notificationQueue.shift()
+    if (!next || !Array.isArray(next.command)) return root.pumpNotificationQueue()
     root.notificationRunning = true
-    notifyProcess.command = next
+    root.activeNotificationIsTest = next.isTest === true
+    if (root.activeNotificationIsTest) root.notificationTestStatus = "Sending…"
+    notifyProcess.command = next.command
     notifyProcess.running = true
   }
 
@@ -1100,8 +1147,14 @@ Panel {
           CheckpointMeter {
             anchors.verticalCenter: parent.verticalCenter
             width: Style.space(48)
-            value: root.providerPercent(providerGroup.modelData)
-            secondaryValue: root.providerSecondaryPercent(providerGroup.modelData)
+            value: {
+              var percent = root.providerPercent(providerGroup.modelData)
+              return percent >= 0 ? root.displayPercent(percent) : -1
+            }
+            secondaryValue: {
+              var percent = root.providerSecondaryPercent(providerGroup.modelData)
+              return percent >= 0 ? root.displayPercent(percent) : -1
+            }
             severity: root.providerSeverity(providerGroup.modelData)
             visible: root.providerSettingLabelMode(providerGroup.modelData.providerId) === "full"
               && root.providerPercent(providerGroup.modelData) >= 0
@@ -2431,35 +2484,58 @@ Panel {
                 property int draftCycleSlots: usage.barCycleSlots
                 property int draftCycleIntervalSec: usage.barCycleIntervalSec
                 property int draftRefreshIntervalSec: usage.refreshIntervalSec
-                property int draftWarnThresholdPct: root.warnThresholdPct
-                property int draftCriticalThresholdPct: root.criticalThresholdPct
+                property int draftWarnThresholdPct: root.displayWarnThresholdPct
+                property int draftCriticalThresholdPct: root.displayCriticalThresholdPct
+                property bool draftShowsAvailable: usage.showAvailablePercentage
 
                 readonly property bool settingsDirty: draftCycleSlots !== usage.barCycleSlots
                   || draftCycleIntervalSec !== usage.barCycleIntervalSec
                   || draftRefreshIntervalSec !== usage.refreshIntervalSec
-                  || draftWarnThresholdPct !== root.warnThresholdPct
-                  || draftCriticalThresholdPct !== root.criticalThresholdPct
+                  || draftWarnThresholdPct !== root.displayWarnThresholdPct
+                  || draftCriticalThresholdPct !== root.displayCriticalThresholdPct
 
-                // A warn band at or above critical collapses to nothing
-                // meaningful (severityFor's own guard silently favors
-                // critical) — catch it here instead, before Save, where a
-                // person editing the number can actually see why it's stuck.
-                readonly property bool draftThresholdsValid: draftWarnThresholdPct < draftCriticalThresholdPct
+                // In used terms Warn must be below Critical; complementing
+                // both values reverses that ordering in available terms.
+                // Catch either invalid form before Save, where the person
+                // editing the number can see why it is stuck.
+                readonly property bool draftThresholdsValid: draftShowsAvailable
+                  ? draftWarnThresholdPct > draftCriticalThresholdPct
+                  : draftWarnThresholdPct < draftCriticalThresholdPct
 
                 function resyncDrafts() {
                   draftCycleSlots = usage.barCycleSlots
                   draftCycleIntervalSec = usage.barCycleIntervalSec
                   draftRefreshIntervalSec = usage.refreshIntervalSec
-                  draftWarnThresholdPct = root.warnThresholdPct
-                  draftCriticalThresholdPct = root.criticalThresholdPct
+                  draftWarnThresholdPct = root.displayWarnThresholdPct
+                  draftCriticalThresholdPct = root.displayCriticalThresholdPct
+                  draftShowsAvailable = usage.showAvailablePercentage
+                }
+
+                // Preserve every in-progress draft when the presentation mode
+                // changes. Only complement the two threshold fields in place;
+                // resyncDrafts() would incorrectly discard unrelated edits.
+                function syncPercentageMode() {
+                  if (draftShowsAvailable === usage.showAvailablePercentage) return
+                  draftWarnThresholdPct = 100 - draftWarnThresholdPct
+                  draftCriticalThresholdPct = 100 - draftCriticalThresholdPct
+                  draftShowsAvailable = usage.showAvailablePercentage
                 }
 
                 function saveDrafts() {
                   usage.setBarCycleSlots(draftCycleSlots)
                   usage.setBarCycleIntervalSec(draftCycleIntervalSec)
                   usage.setRefreshIntervalSec(draftRefreshIntervalSec)
-                  usage.setWarnThresholdPct(draftWarnThresholdPct)
-                  usage.setCriticalThresholdPct(draftCriticalThresholdPct)
+                  usage.setWarnThresholdPct(draftShowsAvailable
+                    ? 100 - draftWarnThresholdPct : draftWarnThresholdPct)
+                  usage.setCriticalThresholdPct(draftShowsAvailable
+                    ? 100 - draftCriticalThresholdPct : draftCriticalThresholdPct)
+                }
+
+                Connections {
+                  target: usage
+                  function onShowAvailablePercentageChanged() {
+                    behaviourContent.syncPercentageMode()
+                  }
                 }
 
                 Text {
@@ -2525,7 +2601,7 @@ Panel {
 
                   NumberField {
                     width: behaviourGrid.cellWidth
-                    label: "Warn (%)"
+                    label: behaviourContent.draftShowsAvailable ? "Warn avail. (%)" : "Warn used (%)"
                     value: behaviourContent.draftWarnThresholdPct
                     from: 1
                     to: 99
@@ -2538,10 +2614,10 @@ Panel {
 
                   NumberField {
                     width: behaviourGrid.cellWidth
-                    label: "Critical (%)"
+                    label: behaviourContent.draftShowsAvailable ? "Critical avail. (%)" : "Critical used (%)"
                     value: behaviourContent.draftCriticalThresholdPct
-                    from: 1
-                    to: 100
+                    from: behaviourContent.draftShowsAvailable ? 0 : 1
+                    to: behaviourContent.draftShowsAvailable ? 99 : 100
                     stepSize: 1
                     foreground: root.foreground
                     accent: root.urgent
@@ -2556,8 +2632,12 @@ Panel {
                   // between the normal hint and the validation error so nothing
                   // below it jumps when Warn/Critical cross each other.
                   text: behaviourContent.draftThresholdsValid
-                    ? "Warn colors the meter early; Critical marks it urgent. Type an exact value or use the arrows, then Save applies all five fields above together."
-                    : "Warn must be lower than Critical — Save is disabled until that's fixed."
+                    ? (behaviourContent.draftShowsAvailable
+                      ? "Warn when available quota falls this low; Critical marks the lower urgent level. Type an exact value or use the arrows, then Save applies all five fields above together."
+                      : "Warn colors the meter early; Critical marks it urgent. Type an exact value or use the arrows, then Save applies all five fields above together.")
+                    : (behaviourContent.draftShowsAvailable
+                      ? "Warn availability must be higher than Critical — Save is disabled until that's fixed."
+                      : "Warn usage must be lower than Critical — Save is disabled until that's fixed.")
                   color: behaviourContent.draftThresholdsValid ? root.dim : root.urgent
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
@@ -2595,40 +2675,111 @@ Panel {
                   }
                 }
 
-                // Notifications (opt-in, off by default) — a single
-                // system notification the moment a provider first crosses
-                // Warn or Critical, not a repeat every refresh. See
-                // checkThresholdNotifications() in this file.
-                Row {
-                  spacing: Style.space(10)
+                // Keep every immediate preference on one visible row. Adding
+                // another toggle must not make Settings taller or introduce
+                // scrolling; each cell stays comfortably within the wide
+                // settings panel.
+                Grid {
+                  id: preferenceGrid
+                  width: parent.width
+                  columns: 3
+                  columnSpacing: Style.space(12)
+                  readonly property real cellWidth: Math.floor((width - columnSpacing * 2) / 3)
 
-                  ToggleSwitch {
-                    anchors.verticalCenter: parent.verticalCenter
-                    checked: usage.notificationsEnabled
-                    foreground: root.foreground
-                    accent: Color.accent
-                    onToggled: usage.setNotificationsEnabled(!usage.notificationsEnabled)
+                  Row {
+                    width: preferenceGrid.cellWidth
+                    spacing: Style.space(10)
+
+                    ToggleSwitch {
+                      anchors.verticalCenter: parent.verticalCenter
+                      checked: usage.showAvailablePercentage
+                      foreground: root.foreground
+                      accent: Color.accent
+                      onToggled: usage.setShowAvailablePercentage(!usage.showAvailablePercentage)
+                    }
+
+                    Text {
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: "Show available quota"
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                    }
                   }
 
-                  Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "Notify when a provider crosses Warn or Critical"
-                    color: root.foreground
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
+                  Row {
+                    width: preferenceGrid.cellWidth
+                    spacing: Style.space(6)
+
+                    ToggleSwitch {
+                      anchors.verticalCenter: parent.verticalCenter
+                      checked: usage.colorfulUsageMeters
+                      foreground: root.foreground
+                      accent: Color.accent
+                      onToggled: usage.setColorfulUsageMeters(!usage.colorfulUsageMeters)
+                    }
+
+                    Text {
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: "Color-code meters"
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                    }
                   }
 
-                  Button {
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "Test"
-                    tooltipText: "Send one notification now, to confirm your system shows it — independent of the toggle above."
-                    bordered: true
-                    foreground: root.foreground
-                    fontFamily: root.fontFamily
-                    fontSize: Style.font.caption
-                    verticalPadding: Style.space(4)
-                    onClicked: root.sendTestNotification()
+                  // Notifications are opt-in and fire once at each threshold,
+                  // not on every refresh. Test remains independent of the
+                  // toggle and reports its process result beside the button.
+                  Row {
+                    width: preferenceGrid.cellWidth
+                    spacing: Style.space(6)
+
+                    ToggleSwitch {
+                      anchors.verticalCenter: parent.verticalCenter
+                      checked: usage.notificationsEnabled
+                      foreground: root.foreground
+                      accent: Color.accent
+                      onToggled: usage.setNotificationsEnabled(!usage.notificationsEnabled)
+                    }
+
+                    Text {
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: "Threshold alerts"
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                    }
+
+                    Button {
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: "Test"
+                      tooltipText: "Send one notification now — independent of the notification toggle."
+                      bordered: true
+                      foreground: root.foreground
+                      fontFamily: root.fontFamily
+                      fontSize: Style.font.caption
+                      verticalPadding: Style.space(4)
+                      onClicked: root.sendTestNotification()
+                    }
+
+                    Text {
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: root.notificationTestStatus
+                      color: text === "Failed" ? root.urgent : root.dim
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                    }
                   }
+                }
+
+                Text {
+                  width: parent.width
+                  text: "Available mode switches percentages, meters, and warning values together. Meter colors are optional; alerts remain opt-in."
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
                 }
               }
             }
@@ -2686,7 +2837,7 @@ Panel {
       Text {
         id: limitValue
         text: limitRow.window && limitRow.window.percent >= 0
-          ? Format.formatPercent(limitRow.window.percent)
+          ? Format.formatPercent(limitRow.window.percent, usage.showAvailablePercentage)
           : "n/a"
         color: root.foreground
         font.family: root.fontFamily
@@ -2698,7 +2849,8 @@ Panel {
 
     Meter {
       width: parent.width
-      value: limitRow.window ? limitRow.window.percent : -1
+      value: limitRow.window && limitRow.window.percent >= 0
+        ? root.displayPercent(limitRow.window.percent) : -1
       severity: limitRow.severity
     }
 
