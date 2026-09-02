@@ -206,6 +206,24 @@ Item {
     }
   }
 
+  // Omarchy's packaged updater cannot discover collectors bundled inside a
+  // user plugin. Run Devin from this checkout so the normal widget refresh
+  // updates its record too; installing the optional companion timer should
+  // not be required for a provider this plugin ships first-class support for.
+  Process {
+    id: devinUpdateProcess
+    running: false
+    onExited: {
+      root.rescanAgents()
+      root.reloadAllAgents()
+    }
+
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: if (text.trim() !== "") console.warn("agents", text.trim())
+    }
+  }
+
   function updateCommand(kind, agentIds) {
     var updateArgs = []
     var providers = settings && settings.providers ? settings.providers : {}
@@ -234,6 +252,15 @@ Item {
     return ["bash", "-c", script].concat(command)
   }
 
+  function runDevinUpdate(agentIds) {
+    if (!providerEnabled("devin") || devinUpdateProcess.running) return
+    if (agentIds && agentIds.indexOf("devin") === -1) return
+    var runnerUrl = String(Qt.resolvedUrl("collectors/bin/agent-usage-plus-collectors"))
+    var runnerPath = decodeURIComponent(runnerUrl.replace(/^file:\/\//, ""))
+    devinUpdateProcess.command = boundedCommand([runnerPath, "update", "devin"], root.maxUpdateStderrBytes)
+    devinUpdateProcess.running = true
+  }
+
   function runUpdate(kind, agentIds) {
     if (updateProcess.running) {
       // Collapse queued requests to one full rerun; a forced refresh outranks
@@ -243,6 +270,7 @@ Item {
     }
     updateProcess.command = boundedCommand(updateCommand(kind, agentIds), root.maxUpdateStderrBytes)
     updateProcess.running = true
+    runDevinUpdate(agentIds)
   }
 
   function refresh() { refreshAll(true) }
