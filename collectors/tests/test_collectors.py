@@ -7,9 +7,23 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from unittest.mock import patch
 
-from agent_usage_collectors import cursor, deepseek, gemini, kimi, opencode_go, openrouter, xai
+from agent_usage_collectors import (
+    cursor,
+    deepseek,
+    devin,
+    gemini,
+    kimi,
+    opencode_go,
+    openrouter,
+    xai,
+)
 from agent_usage_collectors.common import MAX_RESPONSE_BYTES, base_record, classify_failure, endpoint_problem, request_json
 from agent_usage_collectors.deepseek import record_from_payload as deepseek_record
+from agent_usage_collectors.devin import collect as collect_devin
+from agent_usage_collectors.devin import empty_stats as empty_devin_stats
+from agent_usage_collectors.devin import parse_plan_status as devin_plan_status
+from agent_usage_collectors.devin import read_credentials as read_devin_credentials
+from agent_usage_collectors.devin import stats_from_rows as devin_stats_from_rows
 from agent_usage_collectors.cursor import record_from_payload as cursor_record
 from agent_usage_collectors.gemini import record_from_payload as gemini_record
 from agent_usage_collectors.kimi import record_from_payload as kimi_record
@@ -52,7 +66,23 @@ class CollectorParsingTests(unittest.TestCase):
                 request_json("https://provider.example/usage")
 
     def test_every_companion_collector_reports_missing_auth_without_network(self) -> None:
-        with patch.object(openrouter, "find_key", return_value=None), patch.object(deepseek, "find_key", return_value=None), patch.object(kimi, "find_key", return_value=None), patch.object(xai, "find_key", return_value=None), patch.object(gemini, "read_access_token", return_value=None), patch.object(cursor, "read_token", return_value=None), patch("agent_usage_collectors.zai.find_any_key", return_value=None):
+        with (
+            patch.object(openrouter, "find_key", return_value=None),
+            patch.object(deepseek, "find_key", return_value=None),
+            patch.object(kimi, "find_key", return_value=None),
+            patch.object(xai, "find_key", return_value=None),
+            patch.object(gemini, "read_access_token", return_value=None),
+            patch.object(cursor, "read_token", return_value=None),
+            patch.object(devin, "read_credentials", return_value=None),
+            patch.object(
+                devin,
+                "collect_local_stats",
+                return_value=(empty_devin_stats(), False, ""),
+            ),
+            patch("agent_usage_collectors.zai.find_any_key", return_value=None),
+            tempfile.TemporaryDirectory() as empty_state_dir,
+            patch("agent_usage_collectors.common.usage_dir", return_value=Path(empty_state_dir)),
+        ):
             records = [
                 openrouter.collect(),
                 deepseek.collect(),
@@ -60,6 +90,7 @@ class CollectorParsingTests(unittest.TestCase):
                 xai.collect(),
                 gemini.collect(),
                 cursor.collect(),
+                collect_devin(),
                 collect_zai(),
             ]
         self.assertTrue(all(record.get("ready") is False for record in records))
@@ -67,7 +98,8 @@ class CollectorParsingTests(unittest.TestCase):
         self.assertEqual(records[3]["usageStatusText"], "Waiting for API key")
         self.assertEqual(records[4]["usageStatusText"], "Waiting for Gemini sign-in")
         self.assertEqual(records[5]["usageStatusText"], "Waiting for Cursor sign-in")
-        self.assertEqual(records[6]["usageStatusText"], "Waiting for Z.AI API key")
+        self.assertEqual(records[6]["usageStatusText"], "Waiting for Devin sign-in")
+        self.assertEqual(records[7]["usageStatusText"], "Waiting for Z.AI API key")
 
     def test_openrouter_budget_maps_to_balance(self) -> None:
         record = openrouter_record({"data": {"limit": 25, "limit_remaining": 17.5, "usage": 7.5, "limit_reset": "monthly"}})
@@ -309,6 +341,205 @@ class CollectorParsingTests(unittest.TestCase):
                 "cacheCreationInputTokens": 0,
             },
         })
+
+
+class DevinCollectorTests(unittest.TestCase):
+    def test_stats_from_rows_uses_canonical_token_buckets(self) -> None:
+        today_ms = int(_utc_midnight_ms(days_ago=0))
+        yesterday_ms = int(_utc_midnight_ms(days_ago=1))
+        rows = [
+            (
+                "session-1", "claude-sonnet-5", None, today_ms,
+                100, None, 50, None, 10, None, 5,
+            ),
+            (
+                "session-1", "claude-sonnet-5", None, today_ms,
+                20, None, 5, None, 0, None, 0,
+            ),
+            (
+                "session-2", "gpt-5", "gpt-5.6", yesterday_ms,
+                None, 200, None, 100, None, 40, 0,
+            ),
+        ]
+        stats = devin_stats_from_rows(rows)
+        self.assertEqual(stats["todayPrompts"], 2)
+        self.assertEqual(stats["todaySessions"], 1)
+        self.assertEqual(stats["todayTotalTokens"], 190)
+        self.assertEqual(stats["totalPrompts"], 3)
+        self.assertEqual(stats["totalSessions"], 2)
+        self.assertEqual(
+            stats["todayTokensByModel"]["claude-sonnet-5"],
+            {
+                "inputTokens": 120,
+                "outputTokens": 55,
+                "cacheReadInputTokens": 10,
+                "cacheCreationInputTokens": 5,
+            },
+        )
+        self.assertIn("gpt-5.6", stats["modelUsage"])
+
+    def test_stats_from_rows_bounds_untrusted_model_ids(self) -> None:
+        today_ms = int(_utc_midnight_ms(days_ago=0))
+        rows = [
+            (f"session-{index}", f"model-{index}", None, today_ms, 1, None, 0, None, 0, None, 0)
+            for index in range(110)
+        ]
+        stats = devin_stats_from_rows(rows)
+        self.assertEqual(len(stats["modelUsage"]), devin.MAX_MODEL_IDS)
+        self.assertIn("other", stats["modelUsage"])
+
+    def test_plan_status_maps_daily_weekly_and_overage_balance(self) -> None:
+        parsed = devin_plan_status(
+            {
+                "userStatus": {
+                    "planStatus": {
+                        "planInfo": {"planName": "Pro"},
+                        "dailyQuotaRemainingPercent": 46,
+                        "weeklyQuotaRemainingPercent": 17,
+                        "dailyQuotaResetAtUnix": 1788403200,
+                        "weeklyQuotaResetAtUnix": 1788662400,
+                        "overageBalanceMicros": 2_500_000,
+                    }
+                }
+            }
+        )
+        self.assertEqual(parsed["tier"], "Pro")
+        self.assertEqual([limit["title"] for limit in parsed["limits"]], ["Daily", "Weekly"])
+        self.assertEqual(parsed["limits"][0]["percent"], 0.54)
+        self.assertEqual(parsed["limits"][1]["percent"], 0.83)
+        self.assertTrue(parsed["limits"][0]["resetsAt"].endswith("Z"))
+        self.assertEqual(
+            parsed["balance"],
+            {"remaining": 2.5, "currency": "USD", "estimated": False},
+        )
+
+    def test_hidden_daily_quota_falls_back_to_weekly_window(self) -> None:
+        parsed = devin_plan_status(
+            {
+                "userStatus": {
+                    "planStatus": {
+                        "planInfo": {"hideDailyQuota": True},
+                        "dailyQuotaRemainingPercent": 25,
+                    }
+                }
+            }
+        )
+        self.assertEqual(
+            parsed["limits"],
+            [{
+                "label": "Weekly (7-day)",
+                "title": "Weekly",
+                "percent": 0.75,
+                "resetsAt": "",
+            }],
+        )
+
+    def test_credentials_are_bounded_and_api_server_is_validated(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            credentials = Path(directory) / "credentials.toml"
+            credentials.write_text(
+                'windsurf_api_key = "test-token"\napi_server_url = "https://server.codeium.com"\n',
+                encoding="utf-8",
+            )
+            with patch.dict("os.environ", {"DEVIN_CREDENTIALS_FILE": str(credentials)}):
+                self.assertEqual(
+                    read_devin_credentials(),
+                    ("test-token", "https://server.codeium.com"),
+                )
+
+            credentials.write_text(
+                'windsurf_api_key = "test-token"\napi_server_url = "https://user@evil.example"\n',
+                encoding="utf-8",
+            )
+            with patch.dict("os.environ", {"DEVIN_CREDENTIALS_FILE": str(credentials)}):
+                with self.assertRaisesRegex(ValueError, "invalid API server"):
+                    read_devin_credentials()
+
+            credentials.write_bytes(b"x" * (devin.MAX_CREDENTIAL_BYTES + 1))
+            with patch.dict("os.environ", {"DEVIN_CREDENTIALS_FILE": str(credentials)}):
+                with self.assertRaisesRegex(ValueError, "unexpectedly large"):
+                    read_devin_credentials()
+
+    def test_python_310_credentials_fallback_reads_only_supported_key(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            credentials = Path(directory) / "credentials.toml"
+            credentials.write_text(
+                'windsurf_api_key = "test-token"\napi_server_url = "https://devin.example"\n',
+                encoding="utf-8",
+            )
+            with (
+                patch.dict("os.environ", {"DEVIN_CREDENTIALS_FILE": str(credentials)}),
+                patch.object(devin, "tomllib", None),
+            ):
+                self.assertEqual(read_devin_credentials(), ("test-token", "https://devin.example"))
+
+    def test_collect_sends_credential_only_to_configured_quota_endpoint(self) -> None:
+        payload = {
+            "userStatus": {
+                "planStatus": {
+                    "planInfo": {"planName": "Pro"},
+                    "dailyQuotaRemainingPercent": 46,
+                }
+            }
+        }
+        with (
+            patch.object(
+                devin,
+                "collect_local_stats",
+                return_value=(empty_devin_stats(), False, ""),
+            ),
+            patch.object(
+                devin,
+                "read_credentials",
+                return_value=("test-token", "https://server.codeium.com"),
+            ),
+            patch.object(devin, "request_json", return_value=payload) as request,
+        ):
+            record = collect_devin()
+        self.assertTrue(record["ready"])
+        self.assertEqual(record["scope"], "account")
+        self.assertEqual(record["tierLabel"], "Pro")
+        self.assertEqual(
+            request.call_args.args[0],
+            "https://server.codeium.com/exa.seat_management_pb.SeatManagementService/GetUserStatus",
+        )
+        self.assertEqual(request.call_args.kwargs["headers"]["Connect-Protocol-Version"], "1")
+        self.assertEqual(request.call_args.kwargs["body"]["metadata"]["apiKey"], "test-token")
+        self.assertNotIn("test-token", json.dumps(record))
+
+    def test_collect_distinguishes_expired_auth_from_transport_failure(self) -> None:
+        local = (empty_devin_stats(), False, "")
+        rejected_error = HTTPError("https://server.codeium.com", 401, "unauthorized", {}, None)
+        with (
+            tempfile.TemporaryDirectory() as state_home,
+            patch.dict("os.environ", {"XDG_STATE_HOME": state_home}),
+            patch.object(devin, "collect_local_stats", return_value=local),
+            patch.object(
+                devin,
+                "read_credentials",
+                return_value=("test-token", "https://server.codeium.com"),
+            ),
+            patch.object(devin, "request_json", side_effect=rejected_error),
+        ):
+            rejected = collect_devin()
+        rejected_error.close()
+        self.assertEqual(rejected["usageStatusText"], "Devin sign-in expired")
+        self.assertNotIn("retryAdvised", rejected)
+
+        with (
+            tempfile.TemporaryDirectory() as state_home,
+            patch.dict("os.environ", {"XDG_STATE_HOME": state_home}),
+            patch.object(devin, "collect_local_stats", return_value=local),
+            patch.object(
+                devin,
+                "read_credentials",
+                return_value=("test-token", "https://server.codeium.com"),
+            ),
+            patch.object(devin, "request_json", side_effect=URLError("offline")),
+        ):
+            unavailable = collect_devin()
+        self.assertEqual(unavailable["usageStatusText"], "Devin usage unavailable")
+        self.assertTrue(unavailable["retryAdvised"])
 
 
 class OpenCodeGoCollectorTests(unittest.TestCase):

@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT))
 
 from agent_usage_collectors.deepseek import collect as collect_deepseek  # noqa: E402
 from agent_usage_collectors.cursor import collect as collect_cursor  # noqa: E402
+from agent_usage_collectors.devin import collect as collect_devin  # noqa: E402
 from agent_usage_collectors.gemini import collect as collect_gemini  # noqa: E402
 from agent_usage_collectors.kimi import collect as collect_kimi  # noqa: E402
 from agent_usage_collectors.opencode_go import collect as collect_opencode_go  # noqa: E402
@@ -28,6 +29,7 @@ COLLECTORS = {
     "zai": collect_zai,
     "gemini": collect_gemini,
     "cursor": collect_cursor,
+    "devin": collect_devin,
     "kimi": collect_kimi,
     "opencode-go": collect_opencode_go,
 }

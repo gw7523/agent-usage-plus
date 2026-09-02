@@ -17,6 +17,7 @@ the panel already watches.
 | Cursor | personal subscription pools from Cursor dashboard's `GET /api/usage-summary`, using the locally signed-in Cursor IDE or `cursor-agent` session | Cursor IDE/cursor-agent sign-in; otherwise **Waiting for Cursor sign-in** tells the user to sign in locally. Team accounts without a per-user meter report a clear unavailable status rather than an invented percentage |
 | Kimi | weekly Coding Plan quota and any 5-hour rolling window from `GET /coding/v1/usages` | `KIMI_API_KEY` or `collectors.json` entry; otherwise **Waiting for API key** gives the exact setup path |
 | OpenCode Go | local session/token stats from opencode's own SQLite store, plus the authoritative rolling/weekly/monthly allowances from Zen's `GET /zen/go/v1/usage` | `opencode auth login` sign-in read from `~/.local/share/opencode/auth.json`; otherwise **Waiting for auth** — local stats still show without it |
+| Devin | local session/token stats from Devin CLI's read-only SQLite store, plus the signed-in account's daily/weekly quota and overage balance from the CLI's `GetUserStatus` request | `devin auth login` sign-in read from `$XDG_DATA_HOME/devin/credentials.toml`; otherwise **Waiting for Devin sign-in** — local stats still show without it |
 | Claude Code | existing local transcript collector, decorated with published API pricing | no new credential; the base Claude collector retains its own sign-in state |
 | Codex | existing local transcript collector, decorated with published API pricing | no new credential; the base Codex collector retains its own sign-in state |
 
@@ -39,8 +40,8 @@ From a clone of this repository:
 ```
 
 The runner atomically writes `openrouter.json`, `deepseek.json`, `xai.json`,
-`zai.json`, `gemini.json`, `cursor.json`, `kimi.json`, and `opencode-go.json` under
-`$XDG_STATE_HOME/omarchy/agents/usage` (default
+`zai.json`, `gemini.json`, `cursor.json`, `kimi.json`, `opencode-go.json`, and
+`devin.json` under `$XDG_STATE_HOME/omarchy/agents/usage` (default
 `~/.local/state/omarchy/agents/usage`). Run either collector directly when
 you want to inspect only its JSON output:
 
@@ -183,16 +184,37 @@ zero meter. References: [Z.AI API authentication](https://docs.z.ai/api-referenc
 [Coding Plan FAQ](https://docs.z.ai/devpack/faq), [Usage Policy](https://docs.z.ai/devpack/usage-policy),
 and the read-only quota integration documented by [CodexBar](https://github.com/steipete/CodexBar/blob/main/docs/zai.md).
 
+### Devin details
+
+Run `devin auth login` before collecting. The collector reads the official
+CLI's documented credentials file and sends its token only to the HTTPS API
+server stored alongside that token. The credentials read is capped at 64 KiB,
+the server URL must be a plain HTTPS origin, and the quota response uses the
+same 1 MiB bound as every other remote collector. It never writes the
+credentials file or includes a token or provider response body in its record.
+
+Local stats come from `$XDG_DATA_HOME/devin/cli/sessions.db` in SQLite
+read-only/query-only mode. The query extracts only assistant-message token
+metrics; it does not load message text into the collector. Set `DEVIN_HOME` or
+`DEVIN_CREDENTIALS_FILE` only when those official files live outside their
+normal XDG locations.
+
+The login flow and credential location are documented in [Devin CLI's official
+authentication guide](https://docs.devin.ai/cli/enterprise/devin-auth). The
+quota RPC is used by the [official Devin CLI](https://github.com/CognitionAI/devin-cli)
+but is not a public API contract, so an unfamiliar response produces a visible
+“usage unavailable” state rather than a fabricated zero.
+
 ## Endpoint stability and provider coverage
 
 OpenRouter, DeepSeek, and Z.AI's quota route are provider APIs. Gemini's Code Assist
 quota RPC is called by the [official Gemini CLI source](https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/code_assist/server.ts),
-but is not a public API contract. Cursor's `usage-summary` route is the
-dashboard's own undocumented endpoint, and Kimi's Coding Plan route is
-community-confirmed rather than formally documented. The three parsers fail
-closed on an unfamiliar response: the panel shows “usage unavailable” instead
-of a fabricated zero meter. Their exact expected response shapes are covered
-by offline tests.
+but is not a public API contract. Devin's CLI quota RPC and Cursor's
+`usage-summary` route are also provider-client endpoints rather than public API
+contracts, and Kimi's Coding Plan route is community-confirmed rather than
+formally documented. These parsers fail closed on an unfamiliar response: the
+panel shows “usage unavailable” instead of a fabricated zero meter. Their exact
+expected response shapes are covered by offline tests.
 
 Gemini API-key and Vertex API usage are deliberately not represented by the
 Gemini subscription collector: Google exposes per-project billing/quota in its
