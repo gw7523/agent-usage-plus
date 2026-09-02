@@ -55,6 +55,45 @@ test("mergeProviderDisplay: a healthy Claude record keeps its session+weekly lim
 
 // -------------------------------------------------------------------- cost
 
+test("brand: flows sanitized from record through display, snapshot, and merge", () => {
+  const record = readFixture("claude-ok.json")
+
+  // Without a brand, everything renders by the record's own id, as before.
+  const plain = Aggregate.mergeProviderDisplay(record, null, null)
+  assert.equal(plain.brand, "")
+
+  // A second-account record declares whose mark it renders with.
+  const account = Object.assign({}, record, { id: "claude-work", name: "Claude · Work", brand: "claude" })
+  const display = Aggregate.mergeProviderDisplay(account, null, null)
+  assert.equal(display.providerId, "claude-work")
+  assert.equal(display.brand, "claude")
+
+  // The brand survives the sync snapshot round-trip...
+  const snapshot = Aggregate.providerSnapshot(account)
+  assert.equal(snapshot.brand, "claude")
+  const merged = Aggregate.aggregateSnapshots([
+    { deviceId: "laptop", providers: { "claude-work": snapshot } }
+  ])
+  assert.equal(merged.providers["claude-work"].brand, "claude")
+
+  // ...and a synced-only stats brand backfills a local record without one.
+  const backfilled = Aggregate.mergeProviderDisplay(
+    Object.assign({}, record, { id: "claude-work" }),
+    merged.providers["claude-work"],
+    merged
+  )
+  assert.equal(backfilled.brand, "claude")
+
+  // The display object carries brand for every icon-affecting lookup
+  // (candidates and scale both resolve brand-first in Panel.qml).
+  assert.equal(display.brand || display.providerId, "claude")
+
+  // Hostile values sanitize the same way ids do, or collapse to "".
+  assert.equal(Aggregate.sanitizeBrand("../..//claude"), "claude")
+  assert.equal(Aggregate.sanitizeBrand("  "), "")
+  assert.equal(Aggregate.sanitizeBrand(null), "")
+})
+
 test("mergeProviderDisplay: a record without a cost block merges with cost: null (issue #12 regression)", () => {
   for (const name of ["claude-ok.json", "codex-ok.json", "fireworks-ok.json"]) {
     const record = readFixture(name)

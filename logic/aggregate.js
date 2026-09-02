@@ -41,6 +41,17 @@ function sanitizeProviderId(raw) {
   return value.length > 64 ? value.substring(0, 64) : value
 }
 
+// A brand names which provider's mark a record renders with — an account
+// record like `claude-work` declaring `"brand": "claude"` gets the Claude
+// mark instead of the generic glyph. It feeds the same asset-path lookup as
+// a provider id, so the same charset rules apply; unlike an id, an absent
+// or unusable value collapses to "" (render by the record's own id).
+function sanitizeBrand(raw) {
+  var value = String(raw || "").trim()
+  value = value.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^[-_.]+|[-_.]+$/g, "")
+  return value.length > 64 ? value.substring(0, 64) : value
+}
+
 // Strips control characters and the characters QML's rich-text detection
 // keys off of (`<`, `>`, `&`), so a record can't get itself rendered as
 // markup regardless of which Text/Button component ends up displaying it.
@@ -259,6 +270,7 @@ function aggregateSnapshots(snapshots, maxSnapshots) {
     providers[id] = {
       providerId: id,
       providerName: "",
+      brand: "",
       ready: false,
       hasLocalStats: false,
       hasPromptStats: false,
@@ -298,6 +310,7 @@ function aggregateSnapshots(snapshots, maxSnapshots) {
       var acc = providerAcc(providerId)
       acc.devices[device] = true
       if (stats.providerName && acc.providerName === "") acc.providerName = sanitizeDisplayText(stats.providerName, 80)
+      if (stats.brand && acc.brand === "") acc.brand = sanitizeBrand(stats.brand)
       acc.ready = acc.ready || stats.ready === true
       acc.hasLocalStats = acc.hasLocalStats || stats.hasLocalStats !== false
       // Snapshots from before the field existed only came from agents that
@@ -351,6 +364,7 @@ function aggregateSnapshots(snapshots, maxSnapshots) {
     outProviders[id] = {
       providerId: acc2.providerId,
       providerName: acc2.providerName,
+      brand: acc2.brand,
       ready: acc2.ready || providerDevices.length > 0,
       hasLocalStats: acc2.hasLocalStats,
       hasPromptStats: acc2.hasPromptStats,
@@ -388,6 +402,7 @@ function providerSnapshot(record) {
   return {
     providerId: sanitizeProviderId(record.id),
     providerName: sanitizeDisplayText(record.name || record.id, 80),
+    brand: sanitizeBrand(record.brand),
     ready: record.ready === true,
     hasLocalStats: record.hasLocalStats !== false,
     hasPromptStats: record.hasPromptStats !== false,
@@ -473,6 +488,7 @@ function mergeProviderDisplay(record, stats, aggregateMeta) {
   return {
     providerId: providerId,
     providerName: sanitizeDisplayText(record.name || record.id, 80),
+    brand: sanitizeBrand(record.brand) || (synced ? sanitizeBrand(stats.brand) : ""),
     ready: record.ready === true || synced,
     usageStatusText: sanitizeDisplayText(record.usageStatusText, 200),
     authHelpText: sanitizeDisplayText(record.authHelpText, 300),
@@ -720,6 +736,7 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     numberValue: numberValue,
     sanitizeProviderId: sanitizeProviderId,
+    sanitizeBrand: sanitizeBrand,
     sanitizeDisplayText: sanitizeDisplayText,
     sanitizeLimits: sanitizeLimits,
     capRecentDays: capRecentDays,
