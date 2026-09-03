@@ -566,25 +566,27 @@ Panel {
     return "Plan usage"
   }
 
+  // Kept short on purpose: this renders inside a fixed-width column next to
+  // the plan/API figures, and a long sentence here just gets silently
+  // ellipsized — the "resets in" countdown is the one thing that must
+  // always fit.
   function costPlanHint(row) {
     if (!row) return "No provider data"
     if (row.usageKind === "subscription") {
-      var title = String(row.subscriptionTitle || "Quota")
       var resetAt = String(row.subscriptionResetAt || "")
       if (resetAt !== "") {
         var remainingMs = new Date(resetAt).getTime() - root.nowMs
-        if (remainingMs > 0) return title + " · resets in " + root.formatDuration(remainingMs)
+        if (remainingMs > 0) return "Resets in " + root.formatDuration(remainingMs)
       }
-      return title + " quota"
+      return String(row.subscriptionTitle || "Session") + " quota"
     }
     if (row.usageKind === "api-credit") {
-      var hint = Number(row.balanceFunded) > 0
-        ? "prepaid API balance" : "provider-reported API balance"
-      if (Number(row.balanceFunded) > 0 && Number(row.balanceSpent) >= 0)
-        hint = root.formatMoney(row.balanceSpent, row.balanceCurrency) + " spent of "
-          + root.formatMoney(row.balanceFunded, row.balanceCurrency) + " · " + hint
-      if (row.balanceEstimated) hint += " · estimated"
-      return hint
+      if (Number(row.balanceFunded) > 0 && Number(row.balanceSpent) >= 0) {
+        var spent = root.formatMoney(row.balanceSpent, row.balanceCurrency) + " of "
+          + root.formatMoney(row.balanceFunded, row.balanceCurrency) + " spent"
+        return row.balanceEstimated ? spent + " · est." : spent
+      }
+      return row.balanceEstimated ? "Estimated balance" : "API balance"
     }
     if (row.statusText !== "") return "Provider data unavailable"
     return "No quota or balance reported"
@@ -595,26 +597,23 @@ Panel {
   }
 
   function costApiHint(row) {
-    if (!row || !row.hasCost) return "No priced token data"
-    if (row.incomplete) return "partial published-rate estimate"
-    return "published-rate equivalent"
+    if (!row || !row.hasCost) return "No pricing data"
+    if (row.incomplete) return "Partial estimate"
+    return "API rate estimate"
   }
 
-  function costProviderTooltip(row) {
-    if (!row) return ""
-    var text = String(row.providerName || "Provider") + " · " + root.costPlanLabel(row)
-      + ": " + root.costPlanValue(row)
-    text += " · If API: " + root.costApiValue(row)
-    if (row.period) text += " · " + String(row.period)
-    if (Number(row.coverage) >= 0) text += " · " + root.costCoverageText(row.coverage)
-    if (row.incomplete) text += " · partial"
-    return text
-  }
-
-  function costModelTooltip(row) {
-    if (!row) return ""
-    return usage.friendlyModelName(row.model) + " · " + root.formatUsd(row.usd)
-      + " · " + usage.formatTokenCount(row.tokens) + " tokens"
+  // Combines the two small-print footer lines (price-catalogue coverage and
+  // version) into one so the model breakdown doesn't end in a stack of
+  // near-identical caption rows.
+  function costFooterText(cost, summary) {
+    var parts = []
+    if (summary && Number(summary.coverage) >= 0) {
+      parts.push(summary.totalTokens > 0
+        ? root.costCoverageText(summary.coverage) + " of " + usage.formatTokenCount(summary.totalTokens) + " tokens"
+        : root.costCoverageText(summary.coverage))
+    }
+    if (cost && String(cost.pricingVersion || "") !== "") parts.push("catalogue " + String(cost.pricingVersion))
+    return parts.join(" · ")
   }
 
   function dayTooltip(day, today) {
@@ -2104,19 +2103,6 @@ Panel {
                       anchors.topMargin: Style.space(4)
                     }
 
-                    MouseArea {
-                      id: providerCostHover
-                      anchors.fill: parent
-                      hoverEnabled: true
-                      acceptedButtons: Qt.NoButton
-                    }
-
-                    PanelToolTip {
-                      visible: providerCostHover.containsMouse
-                      text: root.costProviderTooltip(providerCostRow.modelData)
-                      fontFamily: root.fontFamily
-                    }
-
                     Rectangle {
                       id: providerUsageTrack
                       visible: Number(providerCostRow.modelData.usagePercent) >= 0
@@ -2168,14 +2154,16 @@ Panel {
                 }
 
                 Text {
+                  // The "not a bill" disclaimer is already implied by the "If
+                  // billed by API" metric label below, so it's only worth a
+                  // full line here when there's something actionable to say:
+                  // a partial estimate, or no priced data at all.
                   id: costDisclosure
-                  visible: !!root.provider
+                  visible: !!root.provider && (!root.cost || root.cost.incomplete)
                   width: parent.width
                   text: root.cost
-                    ? (root.cost.incomplete
-                      ? "Partial API equivalent · " + root.unpricedModelText(root.cost)
-                      : "Same recorded tokens priced at published API rates · not a bill.")
-                    : "This provider reports plan/credit usage but no priced token total."
+                    ? "Partial estimate · " + root.unpricedModelText(root.cost)
+                    : "No priced token total for this provider yet."
                   textFormat: Text.PlainText
                   color: root.dim
                   font.family: root.fontFamily
@@ -2431,18 +2419,6 @@ Panel {
                         }
                       }
 
-                      MouseArea {
-                        id: costModelHover
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        acceptedButtons: Qt.NoButton
-                      }
-
-                      PanelToolTip {
-                        visible: costModelHover.containsMouse
-                        text: root.costModelTooltip(costModelRow.modelData)
-                        fontFamily: root.fontFamily
-                      }
                     }
                   }
                 }
@@ -2474,24 +2450,9 @@ Panel {
                 }
 
                 Text {
-                  visible: !!root.cost && root.costSummary && root.costSummary.coverage >= 0
+                  visible: text !== ""
                   width: parent.width
-                  text: root.costSummary
-                    ? root.costSummary.totalTokens > 0
-                      ? root.costCoverageText(root.costSummary.coverage) + " of "
-                        + usage.formatTokenCount(root.costSummary.totalTokens) + " tokens"
-                      : root.costCoverageText(root.costSummary.coverage)
-                    : ""
-                  textFormat: Text.PlainText
-                  color: root.dim
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                }
-
-                Text {
-                  visible: !!root.cost && String(root.cost.pricingVersion || "") !== ""
-                  width: parent.width
-                  text: root.cost ? "Rate catalogue " + String(root.cost.pricingVersion || "") : ""
+                  text: root.cost ? root.costFooterText(root.cost, root.costSummary) : ""
                   textFormat: Text.PlainText
                   color: root.dim
                   font.family: root.fontFamily

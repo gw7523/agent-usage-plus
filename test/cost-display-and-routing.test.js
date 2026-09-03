@@ -47,7 +47,7 @@ test("panel guards optional cost values before evaluating a hidden card", () => 
   assert.doesNotMatch(source, /text:\s*root\.cost\.incomplete\b/)
   assert.doesNotMatch(source, /color:\s*root\.cost\.incomplete\b/)
   assert.doesNotMatch(source, /text:\s*root\.formatUsd\(root\.cost\.estimateUsd\)/)
-  assert.match(source, /root\.cost\s*\?\s*\(root\.cost\.incomplete/)
+  assert.match(source, /!root\.cost\s*\|\|\s*root\.cost\.incomplete/)
   assert.match(source, /root\.cost\s*\?\s*root\.formatUsd\(root\.cost\.estimateUsd\)\s*:\s*"—"/)
 })
 
@@ -59,7 +59,7 @@ test("cost details keep the partial disclosure neutral and singular", () => {
   const source = readCostCard()
   assert.doesNotMatch(source, /color:\s*root\.warn/)
   assert.doesNotMatch(source, /API USD is a published-rate estimate, not subscription billing\./)
-  assert.match(source, /Partial API equivalent/)
+  assert.match(source, /Partial estimate/)
 })
 
 test("token details do not repeat API prices or partial warnings", () => {
@@ -112,6 +112,6 @@ test("Claude cost wrapper routes a base record through the bundled estimator", t
   const record = JSON.parse(output)
   assert.equal(record.id, "claude")
   assert.equal(record.cost.estimateUsd, 2)
-  assert.equal(record.cost.period, "Local transcript history")
+  assert.equal(record.cost.period, "All time")
   assert.equal(record.cost.activeDays, 3)
 })

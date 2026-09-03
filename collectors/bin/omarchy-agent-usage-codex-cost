@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,11 +19,47 @@ saved_base = Path.home() / ".local/bin/agent-usage-plus-base-codex"
 # carry compatibility fixes ahead of Omarchy's packaged version. Prefer it
 # when present (Codex 0.149 no longer accepts the package's `-a untrusted`).
 base = os.environ.get("AGENT_USAGE_PLUS_CODEX_BASE_COLLECTOR") or str(saved_base if saved_base.is_file() else system_base)
-try:
-    result = subprocess.run([base, *sys.argv[1:]], text=True, capture_output=True, check=True, timeout=90)
-    record = json.loads(result.stdout)
-    if not isinstance(record, dict):
-        raise ValueError("base collector did not emit an object")
-    print(json.dumps(decorate(record, "codex", "Local transcript history"), separators=(",", ":")))
-except (OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError) as exc:
-    print(json.dumps({"id": "codex", "name": "Codex", "ready": False, "usageStatusText": "Codex collector unavailable", "authHelpText": f"Install Codex or set AGENT_USAGE_PLUS_CODEX_BASE_COLLECTOR. ({type(exc).__name__})"}, separators=(",", ":")))
+
+# Many `codex` installs resolve through a version-manager shim (mise, asdf,
+# ...) that does real work - version resolution, sometimes a network check -
+# before it ever execs the real binary. That tax lands inside the base
+# collector's fixed RPC handshake timeout, so a slow shim reads as "Codex
+# limits unavailable" even though Codex itself is installed and authenticated.
+# One retry is enough in practice: the shim's own cache is warm by the second
+# attempt, and the base collector's local-stats scan is deduped within
+# SCAN_REUSE_SECONDS, so the retry costs one more RPC round trip, not a
+# second full scan.
+MAX_ATTEMPTS = 2
+RETRY_DELAY_SECONDS = 1.5
+
+
+def _looks_transient(record):
+    # ready is unconditionally True in the base collector's own record, so it
+    # cannot distinguish a real RPC failure from success - an empty `limits`
+    # list paired with a populated status message is the actual signal.
+    return isinstance(record, dict) and not record.get("limits") and record.get("usageStatusText")
+
+
+record = None
+error_payload = None
+for attempt in range(1, MAX_ATTEMPTS + 1):
+    try:
+        result = subprocess.run([base, *sys.argv[1:]], text=True, capture_output=True, check=True, timeout=90)
+        candidate = json.loads(result.stdout)
+        if not isinstance(candidate, dict):
+            raise ValueError("base collector did not emit an object")
+        record = candidate
+        error_payload = None
+    except (OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError) as exc:
+        record = None
+        error_payload = {"id": "codex", "name": "Codex", "ready": False, "usageStatusText": "Codex collector unavailable", "authHelpText": f"Install Codex or set AGENT_USAGE_PLUS_CODEX_BASE_COLLECTOR. ({type(exc).__name__})"}
+
+    if attempt < MAX_ATTEMPTS and (error_payload is not None or _looks_transient(record)):
+        time.sleep(RETRY_DELAY_SECONDS)
+        continue
+    break
+
+if record is not None:
+    print(json.dumps(decorate(record, "codex", "All time"), separators=(",", ":")))
+else:
+    print(json.dumps(error_payload, separators=(",", ":")))
