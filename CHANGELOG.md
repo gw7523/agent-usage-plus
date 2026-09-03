@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- Optional `brand` record field: a record whose `id` isn't a bundled provider
+  id (e.g. a second account like `claude-work`) can declare `"brand":
+  "claude"` to render with that provider's mark in the bar and panel. This
+  makes multiple accounts of one provider first-class: each account is its
+  own record (own meters, own per-provider settings), branded correctly.
+  Sanitized like a provider id, carried through sync snapshots, validated by
+  `agent-usage-doctor`, and documented in the collector contract.
+
 ### Changed
 
 - Moved estimated API cost out of the compact view and into a Details-only
@@ -15,11 +25,20 @@ All notable changes to this project are documented in this file. The format is b
 - The token-by-model table no longer repeats API prices or displays partial
   cost warnings in yellow; partial estimates are disclosed once in neutral
   text without null-binding errors when a collector has no cost data.
+- The Codex collector retries once when the RPC handshake comes back empty
+  (limits unavailable), so a slow version-manager shim (mise, asdf, ...)
+  resolving `codex` no longer reads as "Codex limits unavailable" on an
+  install that is actually authenticated and working.
 
 ## [2.1.0] - 2026-08-28
 
 ### Added
 
+- An opt-in setting switches percentages, meters, warning controls, and alerts
+  together from quota used to quota available without changing trigger points.
+- An opt-in traffic-light palette color-codes quota meters in both the bar and
+  panel: green while healthy, amber at Warn, and red at Critical. Severity
+  stays usage-based when the meter is shown as available quota.
 - OpenCode Go collector (`collectors/agent_usage_collectors/opencode_go.py`): reads
   local session/token stats from opencode's own SQLite store and the
   authoritative rolling/weekly/monthly allowances from Zen's usage endpoint,
@@ -55,6 +74,9 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Fixed
 
+- Notification Test and threshold alerts now use Omarchy's supported D-Bus
+  sender instead of `notify-send`; Test reports Sending, Sent, or Failed, and
+  the notification controls remain visible beside the available-quota option.
 - Bar and panel provider order now stay aligned after Fixed/Cycle selection and
   drag reordering.
 - Provider marks in the bar follow the live bar foreground, including hover and
@@ -71,7 +93,8 @@ All notable changes to this project are documented in this file. The format is b
 ### Notes
 
 - The interface follows Omarchy's live theme. Warn remains deliberately amber
-  (`#F2B705`); Critical uses the theme's urgent color.
+  (`#F2B705`); Critical uses the theme's urgent color unless the opt-in
+  traffic-light palette is enabled, where Critical is explicitly red.
 - This is a major release: the bar/panel interaction model, provider layout,
   optional collectors, notifications, details view, and settings workflow are
   substantially different from 1.x.
