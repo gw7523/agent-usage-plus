@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 import time
@@ -13,12 +12,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from agent_usage_collectors.transcript_cost import decorate  # noqa: E402
 
-system_base = Path("/usr/share/omarchy/bin/omarchy-agent-usage-codex")
-saved_base = Path.home() / ".local/bin/agent-usage-plus-base-codex"
-# The installer preserves a user-owned collector precisely because it can
-# carry compatibility fixes ahead of Omarchy's packaged version. Prefer it
-# when present (Codex 0.149 no longer accepts the package's `-a untrusted`).
-base = os.environ.get("AGENT_USAGE_PLUS_CODEX_BASE_COLLECTOR") or str(saved_base if saved_base.is_file() else system_base)
+# Always go through the compat wrapper rather than picking a base file here
+# directly: it resolves the same AGENT_USAGE_PLUS_CODEX_BASE_COLLECTOR / saved
+# / packaged priority, but re-reads and re-patches that source on every run.
+# Picking a base path in this script instead would mean whichever file gets
+# chosen - especially install.sh's saved_base backup, a snapshot frozen at
+# install time - never receives a patch added to the compat wrapper later.
+base = str(Path(__file__).with_name("omarchy-agent-usage-codex-compat"))
 
 # Many `codex` installs resolve through a version-manager shim (mise, asdf,
 # ...) that does real work - version resolution, sometimes a network check -
