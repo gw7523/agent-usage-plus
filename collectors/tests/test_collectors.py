@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+from importlib.machinery import SourceFileLoader
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -344,9 +346,24 @@ class CollectorParsingTests(unittest.TestCase):
 
 
 class DevinCollectorTests(unittest.TestCase):
+    def test_bundled_runner_uses_updater_style_filters(self) -> None:
+        path = Path(__file__).parents[1] / "bin" / "agent-usage-plus-collectors"
+        runner = types.ModuleType("agent_usage_plus_runner")
+        runner.__file__ = str(path)
+        SourceFileLoader(runner.__name__, str(path)).exec_module(runner)
+        self.assertEqual(runner.selected_providers(["update", "claude", "devin"]), ["devin"])
+        self.assertEqual(
+            runner.selected_providers(["update", "--force", "--except", "kimi", "devin"]),
+            ["devin"],
+        )
+        self.assertNotIn(
+            "devin",
+            runner.selected_providers(["update", "--except", "devin"]),
+        )
+
     def test_stats_from_rows_uses_canonical_token_buckets(self) -> None:
-        today_ms = int(_utc_midnight_ms(days_ago=0))
-        yesterday_ms = int(_utc_midnight_ms(days_ago=1))
+        today_ms = int(_local_midday_ms(days_ago=0))
+        yesterday_ms = int(_local_midday_ms(days_ago=1))
         rows = [
             (
                 "session-1", "claude-sonnet-5", None, today_ms,
@@ -379,7 +396,7 @@ class DevinCollectorTests(unittest.TestCase):
         self.assertIn("gpt-5.6", stats["modelUsage"])
 
     def test_stats_from_rows_bounds_untrusted_model_ids(self) -> None:
-        today_ms = int(_utc_midnight_ms(days_ago=0))
+        today_ms = int(_local_midday_ms(days_ago=0))
         rows = [
             (f"session-{index}", f"model-{index}", None, today_ms, 1, None, 0, None, 0, None, 0)
             for index in range(110)
@@ -627,6 +644,13 @@ def _utc_midnight_ms(days_ago: int) -> float:
 
     midnight = datetime.now(timezone.utc).replace(hour=12, minute=0, second=0, microsecond=0) - timedelta(days=days_ago)
     return midnight.timestamp() * 1000
+
+
+def _local_midday_ms(days_ago: int) -> float:
+    from datetime import datetime, timedelta
+
+    midday = datetime.now().astimezone().replace(hour=12, minute=0, second=0, microsecond=0)
+    return (midday - timedelta(days=days_ago)).timestamp() * 1000
 
 
 if __name__ == "__main__":

@@ -53,12 +53,21 @@ def publish(agent_id: str, record: dict) -> None:
     temporary.replace(destination / f"{agent_id}.json")
 
 
-def main() -> int:
+def selected_providers(argv: list[str] | None = None) -> list[str]:
     parser = argparse.ArgumentParser(description="Publish Agent Usage Plus API-provider records")
     parser.add_argument("command", choices=["update"], nargs="?", default="update")
-    parser.add_argument("providers", metavar="provider", choices=sorted(COLLECTORS), nargs="*")
-    args = parser.parse_args()
-    for agent_id in args.providers or sorted(COLLECTORS):
+    parser.add_argument("--force", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--limits-only", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--except", dest="excluded", action="append", default=[])
+    parser.add_argument("providers", metavar="provider", nargs="*")
+    args = parser.parse_args(argv)
+    requested = args.providers if args.providers else sorted(COLLECTORS)
+    excluded = set(args.excluded)
+    return [provider for provider in requested if provider in COLLECTORS and provider not in excluded]
+
+
+def main() -> int:
+    for agent_id in selected_providers():
         publish(agent_id, COLLECTORS[agent_id]())
     return 0
 

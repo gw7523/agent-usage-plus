@@ -206,24 +206,6 @@ Item {
     }
   }
 
-  // Omarchy's packaged updater cannot discover collectors bundled inside a
-  // user plugin. Run Devin from this checkout so the normal widget refresh
-  // updates its record too; installing the optional companion timer should
-  // not be required for a provider this plugin ships first-class support for.
-  Process {
-    id: devinUpdateProcess
-    running: false
-    onExited: {
-      root.rescanAgents()
-      root.reloadAllAgents()
-    }
-
-    stderr: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: if (text.trim() !== "") console.warn("agents", text.trim())
-    }
-  }
-
   function updateCommand(kind, agentIds) {
     var updateArgs = []
     var providers = settings && settings.providers ? settings.providers : {}
@@ -233,15 +215,13 @@ Item {
     if (agentIds) {
       for (var i = 0; i < agentIds.length; i++) updateArgs.push(agentIds[i])
     }
-    // A local updater is optional: this plugin must still refresh on a
-    // normal Omarchy installation where only the packaged command exists.
-    // Prefer the local copy when present because it can carry a compatibility
-    // fix ahead of the distro package (notably the Codex CLI auth-mode fix).
-    var localUpdater = home + "/.local/bin/omarchy-agent-usage-update"
-    var script = 'if [[ -x "$1" ]]; then exec "$1" "${@:2}"; fi; exec omarchy-agent-usage-update "${@:2}"'
+    // The plugin-local dispatcher gives packaged and bundled collectors the
+    // same filters and refresh lifecycle without reading shell.json itself.
+    var scriptUrl = String(Qt.resolvedUrl("collectors/bin/agent-usage-plus-update"))
+    var scriptPath = decodeURIComponent(scriptUrl.replace(/^file:\/\//, ""))
     if (kind === "force") updateArgs.unshift("--force")
     if (kind === "limits") updateArgs.unshift("--limits-only")
-    return ["bash", "-c", script, "agent-usage-update", localUpdater].concat(updateArgs)
+    return ["/bin/bash", scriptPath].concat(updateArgs)
   }
 
   // Wraps the real command so only the first maxUpdateStderrBytes bytes of
@@ -250,15 +230,6 @@ Item {
   function boundedCommand(command, maxStderrBytes) {
     var script = 'exec "$0" "$@" 2> >(head -c ' + maxStderrBytes + ' >&2)'
     return ["bash", "-c", script].concat(command)
-  }
-
-  function runDevinUpdate(agentIds) {
-    if (!providerEnabled("devin") || devinUpdateProcess.running) return
-    if (agentIds && agentIds.indexOf("devin") === -1) return
-    var runnerUrl = String(Qt.resolvedUrl("collectors/bin/agent-usage-plus-collectors"))
-    var runnerPath = decodeURIComponent(runnerUrl.replace(/^file:\/\//, ""))
-    devinUpdateProcess.command = boundedCommand([runnerPath, "update", "devin"], root.maxUpdateStderrBytes)
-    devinUpdateProcess.running = true
   }
 
   function runUpdate(kind, agentIds) {
@@ -270,7 +241,6 @@ Item {
     }
     updateProcess.command = boundedCommand(updateCommand(kind, agentIds), root.maxUpdateStderrBytes)
     updateProcess.running = true
-    runDevinUpdate(agentIds)
   }
 
   function refresh() { refreshAll(true) }

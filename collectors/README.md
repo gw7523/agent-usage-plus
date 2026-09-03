@@ -1,11 +1,10 @@
 # Agent Usage Plus collectors
 
-This is the plugin's **supported companion package** for providers with a
-useful account budget or subscription-usage source. It is intentionally
-dependency-free Python (3.10+) and does not send a credential anywhere other
-than the corresponding provider endpoint. The plugin remains usable without
-it; these collectors publish additional records into the same state directory
-the panel already watches.
+These are the plugin's bundled collectors for providers with a useful account
+budget or subscription-usage source. The widget runs them alongside Omarchy's
+packaged collectors through one local dispatcher. They are dependency-free
+Python (3.10+) and do not send a credential anywhere other than the
+corresponding provider endpoint.
 
 | Provider | What the collector reads | First-class credential state |
 |---|---|---|
@@ -32,7 +31,8 @@ present and otherwise the first provider-returned ledger is shown.
 
 ## Install and run
 
-From a clone of this repository:
+An installed plugin refreshes these collectors automatically. From a clone of
+this repository, run or install them directly with:
 
 ```bash
 ./collectors/install.sh

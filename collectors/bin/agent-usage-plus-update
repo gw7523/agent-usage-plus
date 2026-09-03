@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -u
+
+# One updater entry point for the widget. Omarchy keeps ownership of its
+# packaged collectors; this plugin handles only the providers it bundles.
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+base_updater=${AGENT_USAGE_PLUS_BASE_UPDATER:-}
+bundled_runner=${AGENT_USAGE_PLUS_BUNDLED_RUNNER:-"$script_dir/agent-usage-plus-collectors"}
+
+if [[ -z $base_updater ]]; then
+  local_updater=${XDG_BIN_HOME:-"$HOME/.local/bin"}/omarchy-agent-usage-update
+  if [[ -x $local_updater ]]; then
+    base_updater=$local_updater
+  else
+    base_updater=/usr/share/omarchy/bin/omarchy-agent-usage-update
+  fi
+fi
+
+bundled=(openrouter deepseek xai zai gemini cursor devin kimi opencode-go)
+base_args=("$@")
+for provider in "${bundled[@]}"; do
+  base_args+=(--except "$provider")
+done
+
+status=0
+"$base_updater" "${base_args[@]}" &
+base_pid=$!
+"$bundled_runner" update "$@" &
+bundled_pid=$!
+
+wait "$base_pid" || status=1
+wait "$bundled_pid" || status=1
+exit "$status"

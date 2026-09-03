@@ -8,6 +8,7 @@ const path = require("node:path")
 const { execFileSync } = require("node:child_process")
 
 const updater = path.join(__dirname, "..", "collectors", "bin", "omarchy-agent-usage-update")
+const pluginUpdater = path.join(__dirname, "..", "collectors", "bin", "agent-usage-plus-update")
 const installer = path.join(__dirname, "..", "collectors", "install.sh")
 
 function executable(file, body) {
@@ -86,4 +87,29 @@ test("compat installer links both the collector and updater", t => {
     fs.realpathSync(path.join(bin, "omarchy-agent-usage-update")),
     path.join(data, "agent-usage-plus-collectors", "bin", "omarchy-agent-usage-update"),
   )
+})
+
+test("plugin updater gives packaged and bundled collectors the same request", t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-usage-plugin-updater-"))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const base = path.join(root, "base-updater")
+  const bundled = path.join(root, "bundled-runner")
+  const calls = path.join(root, "calls")
+  executable(base, `printf 'base:%s\n' "$*" >>"${calls}"`)
+  executable(bundled, `printf 'bundled:%s\n' "$*" >>"${calls}"`)
+
+  execFileSync("bash", [pluginUpdater, "--force", "devin", "--except", "kimi"], {
+    env: {
+      ...process.env,
+      AGENT_USAGE_PLUS_BASE_UPDATER: base,
+      AGENT_USAGE_PLUS_BUNDLED_RUNNER: bundled,
+    },
+  })
+
+  const lines = fs.readFileSync(calls, "utf8").trim().split("\n")
+  assert.ok(lines.includes("bundled:update --force devin --except kimi"))
+  const baseCall = lines.find(line => line.startsWith("base:"))
+  assert.match(baseCall, /^base:--force devin --except kimi /)
+  for (const provider of ["openrouter", "deepseek", "xai", "zai", "gemini", "cursor", "devin", "kimi", "opencode-go"])
+    assert.ok(baseCall.includes(`--except ${provider}`))
 })
