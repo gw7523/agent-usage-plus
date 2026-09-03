@@ -89,7 +89,7 @@ test("compat installer links both the collector and updater", t => {
   )
 })
 
-test("plugin updater gives packaged and bundled collectors the same request", t => {
+test("plugin updater adds Devin without running every bundled collector", t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-usage-plugin-updater-"))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   const base = path.join(root, "base-updater")
@@ -107,9 +107,7 @@ test("plugin updater gives packaged and bundled collectors the same request", t 
   })
 
   const lines = fs.readFileSync(calls, "utf8").trim().split("\n")
-  assert.ok(lines.includes("bundled:update --force devin --except kimi"))
+  assert.ok(lines.includes("bundled:update --force devin"))
   const baseCall = lines.find(line => line.startsWith("base:"))
-  assert.match(baseCall, /^base:--force devin --except kimi /)
-  for (const provider of ["openrouter", "deepseek", "xai", "zai", "gemini", "cursor", "devin", "kimi", "opencode-go"])
-    assert.ok(baseCall.includes(`--except ${provider}`))
+  assert.equal(baseCall, "base:--force devin --except kimi --except devin")
 })

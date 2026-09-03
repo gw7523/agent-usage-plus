@@ -16,18 +16,41 @@ if [[ -z $base_updater ]]; then
   fi
 fi
 
-bundled=(openrouter deepseek xai zai gemini cursor devin kimi opencode-go)
-base_args=("$@")
-for provider in "${bundled[@]}"; do
-  base_args+=(--except "$provider")
+flags=()
+only=()
+devin_excluded=false
+args=("$@")
+for ((index = 0; index < ${#args[@]}; index++)); do
+  case ${args[$index]} in
+    --force | --limits-only) flags+=("${args[$index]}") ;;
+    --except)
+      ((index += 1))
+      [[ ${args[$index]:-} == devin ]] && devin_excluded=true
+      ;;
+    *) only+=("${args[$index]}") ;;
+  esac
 done
 
+devin_wanted=true
+if $devin_excluded; then
+  devin_wanted=false
+elif ((${#only[@]} > 0)); then
+  devin_wanted=false
+  for provider in "${only[@]}"; do
+    [[ $provider == devin ]] && devin_wanted=true
+  done
+fi
+
 status=0
-"$base_updater" "${base_args[@]}" &
+"$base_updater" "$@" --except devin &
 base_pid=$!
-"$bundled_runner" update "$@" &
-bundled_pid=$!
+if $devin_wanted; then
+  "$bundled_runner" update "${flags[@]}" devin &
+  bundled_pid=$!
+fi
 
 wait "$base_pid" || status=1
-wait "$bundled_pid" || status=1
+if [[ -n ${bundled_pid:-} ]]; then
+  wait "$bundled_pid" || status=1
+fi
 exit "$status"

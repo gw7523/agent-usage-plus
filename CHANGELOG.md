@@ -8,8 +8,8 @@ All notable changes to this project are documented in this file. The format is b
 
 - Devin collector and provider mark: reads local CLI token/session history and
   the signed-in account's daily/weekly quota without storing another copy of
-  the CLI credential. A plugin-local dispatcher refreshes bundled and packaged
-  providers together.
+  the CLI credential. A plugin-local dispatcher refreshes Devin alongside the
+  packaged providers without activating the other optional collectors.
 - Optional `brand` record field: a record whose `id` isn't a bundled provider
   id (e.g. a second account like `claude-work`) can declare `"brand":
   "claude"` to render with that provider's mark in the bar and panel. This
