@@ -595,6 +595,20 @@ Item {
     writeSetting("colorfulUsageMeters", JSON.stringify(!!value))
   }
 
+  // Multi-device sync (see the "sync" section below for the merge itself):
+  // these are the only two knobs exposed in the panel. The device id stays
+  // auto-detected (hostname, falling back through $HOSTNAME/$HOST/$USER —
+  // see safeDeviceId) rather than user-editable, since two machines only
+  // need distinct ids, and a typo'd manual one risks two devices colliding
+  // on the same snapshot file.
+  function setSyncEnabled(value) {
+    writeSetting("syncMode", JSON.stringify(!!value))
+  }
+
+  function setSyncDir(value) {
+    writeSetting("syncDir", JSON.stringify(String(value || "").trim()))
+  }
+
   function setProviderBarRole(id, value) {
     var role = value === "cycle" || value === "fixed" ? value : "off"
     // Keep the old showInBar switch authoritative for compatibility with
