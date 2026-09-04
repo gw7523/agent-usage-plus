@@ -401,12 +401,15 @@ Item {
 
   // Off by default: a notification is an interruption, and nobody asked for
   // one just by installing the widget. See Panel.qml for the actual
-  // threshold-crossing watch and the notify-send dispatch queue.
+  // threshold-crossing watch and Omarchy notification dispatch queue.
   readonly property bool notificationsEnabled: booleanSetting("notificationsEnabled", false)
-
-  // Cost by model (today/week sections) — on by default; the toggle lives
-  // in the panel's Settings row below.
-  readonly property bool costByModelEnabled: booleanSetting("costByModelEnabled", true)
+  // Presentation only: the UI may show the available complement, while
+  // collectors and internal threshold comparisons retain their canonical
+  // used fractions so switching modes never changes when a warning fires.
+  readonly property bool showAvailablePercentage: booleanSetting("showAvailablePercentage", false)
+  // Opt-in visual treatment only. Severity and notification transitions do
+  // not depend on this setting.
+  readonly property bool colorfulUsageMeters: booleanSetting("colorfulUsageMeters", false)
 
   readonly property var showInBarList: Aggregate.selectBarProviders(enabledProviders, settings)
   readonly property var barLayout: Aggregate.selectBarLayout(
@@ -584,8 +587,12 @@ Item {
     writeSetting("notificationsEnabled", JSON.stringify(!!value))
   }
 
-  function setCostByModelEnabled(value) {
-    writeSetting("costByModelEnabled", JSON.stringify(!!value))
+  function setShowAvailablePercentage(value) {
+    writeSetting("showAvailablePercentage", JSON.stringify(!!value))
+  }
+
+  function setColorfulUsageMeters(value) {
+    writeSetting("colorfulUsageMeters", JSON.stringify(!!value))
   }
 
   function setProviderBarRole(id, value) {

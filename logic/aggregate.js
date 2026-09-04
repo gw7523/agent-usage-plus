@@ -41,6 +41,17 @@ function sanitizeProviderId(raw) {
   return value.length > 64 ? value.substring(0, 64) : value
 }
 
+// A brand names which provider's mark a record renders with — an account
+// record like `claude-work` declaring `"brand": "claude"` gets the Claude
+// mark instead of the generic glyph. It feeds the same asset-path lookup as
+// a provider id, so the same charset rules apply; unlike an id, an absent
+// or unusable value collapses to "" (render by the record's own id).
+function sanitizeBrand(raw) {
+  var value = String(raw || "").trim()
+  value = value.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^[-_.]+|[-_.]+$/g, "")
+  return value.length > 64 ? value.substring(0, 64) : value
+}
+
 // Strips control characters and the characters QML's rich-text detection
 // keys off of (`<`, `>`, `&`), so a record can't get itself rendered as
 // markup regardless of which Text/Button component ends up displaying it.
@@ -83,45 +94,6 @@ function capRecentDays(raw) {
 // Bounds how many distinct model ids a single record/snapshot can push into
 // TOKENS BY MODEL bookkeeping, independent of the top-4 Panel.qml already
 // displays — that slice happens after this data is built and merged.
-// Number-map sanitizer for per-model cost maps (model id -> usd).
-function numberMap(raw) {
-  var src = raw && typeof raw === "object" ? raw : {}
-  var out = safeMap()
-  var count = 0
-  for (var id in src) {
-    if (count >= 100) break
-    var n = Number(src[id])
-    if (!isFinite(n) || n < 0) continue
-    out[sanitizeDisplayText(id, 80)] = n
-    count++
-  }
-  return out
-}
-
-// Per-day variant: { "YYYY-MM-DD": { modelId: usd } }.
-function dayNumberMap(raw) {
-  var src = raw && typeof raw === "object" ? raw : {}
-  var out = safeMap()
-  var count = 0
-  for (var day in src) {
-    if (count >= 31) break
-    var entry = src[day]
-    if (!entry || typeof entry !== "object") continue
-    out[day] = numberMapValue(entry)
-    count++
-  }
-  return out
-}
-
-function numberMapValue(entry) {
-  var o = {}
-  for (var model in entry) {
-    var n = Number(entry[model])
-    if (isFinite(n) && n > 0) o[model] = n
-  }
-  return o
-}
-
 function capModelUsage(raw) {
   var usage = raw && typeof raw === "object" ? raw : {}
   var out = safeMap()
@@ -209,6 +181,10 @@ function costValue(raw) {
     })
   }
 
+  var activeDays = Number(raw.activeDays)
+  activeDays = isFinite(activeDays) && activeDays > 0
+    ? Math.min(100000, Math.floor(activeDays)) : 0
+
   return {
     estimateUsd: estimateUsd,
     period: sanitizeDisplayText(raw.period, 20),
@@ -219,6 +195,7 @@ function costValue(raw) {
     }).filter(function(model) { return !!model }) : [],
     pricedTokens: numberValue(raw.pricedTokens),
     unpricedTokens: numberValue(raw.unpricedTokens),
+    activeDays: activeDays,
     byModel: byModel,
     byDay: byDay
   }
@@ -298,6 +275,7 @@ function aggregateSnapshots(snapshots, maxSnapshots) {
     providers[id] = {
       providerId: id,
       providerName: "",
+      brand: "",
       ready: false,
       hasLocalStats: false,
       hasPromptStats: false,
@@ -337,6 +315,7 @@ function aggregateSnapshots(snapshots, maxSnapshots) {
       var acc = providerAcc(providerId)
       acc.devices[device] = true
       if (stats.providerName && acc.providerName === "") acc.providerName = sanitizeDisplayText(stats.providerName, 80)
+      if (stats.brand && acc.brand === "") acc.brand = sanitizeBrand(stats.brand)
       acc.ready = acc.ready || stats.ready === true
       acc.hasLocalStats = acc.hasLocalStats || stats.hasLocalStats !== false
       // Snapshots from before the field existed only came from agents that
@@ -390,6 +369,7 @@ function aggregateSnapshots(snapshots, maxSnapshots) {
     outProviders[id] = {
       providerId: acc2.providerId,
       providerName: acc2.providerName,
+      brand: acc2.brand,
       ready: acc2.ready || providerDevices.length > 0,
       hasLocalStats: acc2.hasLocalStats,
       hasPromptStats: acc2.hasPromptStats,
@@ -427,6 +407,7 @@ function providerSnapshot(record) {
   return {
     providerId: sanitizeProviderId(record.id),
     providerName: sanitizeDisplayText(record.name || record.id, 80),
+    brand: sanitizeBrand(record.brand),
     ready: record.ready === true,
     hasLocalStats: record.hasLocalStats !== false,
     hasPromptStats: record.hasPromptStats !== false,
@@ -512,6 +493,7 @@ function mergeProviderDisplay(record, stats, aggregateMeta) {
   return {
     providerId: providerId,
     providerName: sanitizeDisplayText(record.name || record.id, 80),
+    brand: sanitizeBrand(record.brand) || (synced ? sanitizeBrand(stats.brand) : ""),
     ready: record.ready === true || synced,
     usageStatusText: sanitizeDisplayText(record.usageStatusText, 200),
     authHelpText: sanitizeDisplayText(record.authHelpText, 300),
@@ -527,10 +509,6 @@ function mergeProviderDisplay(record, stats, aggregateMeta) {
     todaySessions: synced ? numberValue(stats.todaySessions) : numberValue(record.todaySessions),
     todayTotalTokens: synced ? numberValue(stats.todayTotalTokens) : numberValue(record.todayTotalTokens),
     todayTokensByModel: synced ? capModelUsage(stats.todayTokensByModel) : capModelUsage(record.todayTokensByModel),
-    todayCostsByModel: synced ? numberMap(stats.todayCostsByModel) : numberMap(record.todayCostsByModel),
-    weekCostsByModel: synced ? numberMap(stats.weekCostsByModel) : numberMap(record.weekCostsByModel),
-    weekTokensByModel: synced ? numberMap(stats.weekTokensByModel) : numberMap(record.weekTokensByModel),
-    dailyCostsByModel: synced ? dayNumberMap(stats.dailyCostsByModel) : dayNumberMap(record.dailyCostsByModel),
     recentDays: synced ? capRecentDays(stats.recentDays) : capRecentDays(record.recentDays),
     totalPrompts: synced ? numberValue(stats.totalPrompts) : numberValue(record.totalPrompts),
     totalSessions: synced ? numberValue(stats.totalSessions) : numberValue(record.totalSessions),
@@ -763,6 +741,7 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     numberValue: numberValue,
     sanitizeProviderId: sanitizeProviderId,
+    sanitizeBrand: sanitizeBrand,
     sanitizeDisplayText: sanitizeDisplayText,
     sanitizeLimits: sanitizeLimits,
     capRecentDays: capRecentDays,

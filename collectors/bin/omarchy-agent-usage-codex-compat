@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Run Omarchy's Codex collector with the current Codex CLI approval policy.
+"""Run Omarchy's Codex collector with fixes ahead of the packaged version.
 
 Codex CLI 0.149 removed the old ``-a untrusted`` value.  Omarchy's collector
 still uses it on some packaged versions, which leaves a healthy ChatGPT login
 with local token counts but no rate-limit windows.  This compatibility wrapper
-uses the root-owned collector unchanged except for that exact invocation.
+uses the root-owned collector unchanged except for these exact patches.
 
 It deliberately reads only Omarchy's packaged collector and refuses an
 unexpected source shape; it never reads credentials or writes configuration.
@@ -13,12 +13,50 @@ return to Omarchy's collector once the upstream package has caught up.
 """
 
 from pathlib import Path
+import os
 import sys
 
 
-PACKAGED_COLLECTOR = Path("/usr/share/omarchy/bin/omarchy-agent-usage-codex")
-OLD = '[codex, "-s", "read-only", "-a", "untrusted", "app-server"]'
-NEW = '[codex, "-s", "read-only", "-a", "never", "app-server"]'
+SYSTEM_COLLECTOR = Path("/usr/share/omarchy/bin/omarchy-agent-usage-codex")
+SAVED_COLLECTOR = Path.home() / ".local/bin/agent-usage-plus-base-codex"
+# install.sh --with-transcript-cost moves the collector Omarchy had installed
+# aside as this backup before symlinking omarchy-agent-usage-codex-cost in
+# its place; omarchy-agent-usage-codex-cost then prefers running the backup
+# over the packaged path when both exist. That backup is a snapshot from
+# install time, not a live file - it never picks up an Omarchy package
+# update or a patch added to PATCHES below on its own, so this must resolve
+# the same file cost's `base` would pick and re-patch it fresh every run;
+# resolving PACKAGED_COLLECTOR to the live path here alone is not enough.
+PACKAGED_COLLECTOR = Path(
+    os.environ.get("AGENT_USAGE_PLUS_CODEX_BASE_COLLECTOR")
+    or (SAVED_COLLECTOR if SAVED_COLLECTOR.is_file() else SYSTEM_COLLECTOR)
+)
+
+# Each patch is applied independently: skipped once upstream carries the fix
+# itself (OLD absent), applied when OLD appears exactly once, and refused
+# when the surrounding source no longer matches what the patch expects.
+PATCHES = [
+    (
+        '[codex, "-s", "read-only", "-a", "untrusted", "app-server"]',
+        '[codex, "-s", "read-only", "-a", "never", "app-server"]',
+    ),
+    (
+        # account/rateLimits/read can come back as a JSON-RPC error (seen in
+        # practice: the ChatGPT backend 404ing on `wham/usage`) rather than
+        # raising. Unpatched, that reads as "result": {} - limits silently
+        # empty, no usageStatusText, no authHelpText - a genuine RPC failure
+        # disguised as a healthy record with nothing to show. Raising here
+        # routes it through the existing except-and-report path below.
+        'account = (account_msg.get("result") or {}).get("account") or {}\n'
+        '    limits = (limits_msg.get("result") or {}).get("rateLimits") or {}',
+        'if account_msg.get("error"):\n'
+        '      raise RuntimeError((account_msg["error"] or {}).get("message") or "account/read error")\n'
+        '    if limits_msg.get("error"):\n'
+        '      raise RuntimeError((limits_msg["error"] or {}).get("message") or "account/rateLimits/read error")\n'
+        '    account = (account_msg.get("result") or {}).get("account") or {}\n'
+        '    limits = (limits_msg.get("result") or {}).get("rateLimits") or {}',
+    ),
+]
 
 
 def main():
@@ -28,15 +66,16 @@ def main():
         print(f"Codex compatibility collector unavailable: {exc}", file=sys.stderr)
         return 1
 
-    if OLD not in source:
-        # A newer Omarchy package has already fixed the incompatible value.
-        # Execute it as-is instead of carrying a stale patch forward.
-        replacement = source
-    elif source.count(OLD) == 1:
-        replacement = source.replace(OLD, NEW)
-    else:
-        print("Codex compatibility collector refused an unexpected upstream source", file=sys.stderr)
-        return 1
+    replacement = source
+    for old, new in PATCHES:
+        if old not in replacement:
+            # A newer Omarchy package has already fixed this, or never had
+            # the issue - carry the source forward unchanged for this patch.
+            continue
+        if replacement.count(old) != 1:
+            print("Codex compatibility collector refused an unexpected upstream source", file=sys.stderr)
+            return 1
+        replacement = replacement.replace(old, new)
 
     namespace = {"__name__": "__main__", "__file__": str(PACKAGED_COLLECTOR)}
     exec(compile(replacement, str(PACKAGED_COLLECTOR), "exec"), namespace)

@@ -5,11 +5,16 @@ Two independent sources, merged into one record:
 1. Balance — the authenticated key's own budget from ``GET /api/v1/auth/key``
    (per-key spending limit), with a fallback to the account prepaid-credit
    ledger from ``GET /api/v1/credits`` for keys without a configured limit.
-2. Local token history and cost estimates — a read-only walk of pi session
+2. Local token history and cost estimate — a read-only walk of pi session
    transcripts (``~/.pi/agent/sessions``) that ran on the ``openrouter``
-   provider, priced against OpenRouter's public model catalogue. Messages
+   provider. The ``cost`` block is priced from OpenRouter's own public model
+   catalogue (fetched once a day, cached) rather than the bundled
+   ``logic/cost.js`` catalogue: OpenRouter routes to hundreds of third-party
+   models whose prices that static catalogue has no way to know. Messages
    whose ``api`` starts with ``openai-codex`` stay owned by the Codex
-   collector so no tokens are ever counted twice.
+   collector so no tokens are ever counted twice. The catalogue is only
+   fetched once a key is present — an unconfigured collector makes no
+   network call at all.
 """
 
 from __future__ import annotations
@@ -17,13 +22,11 @@ from __future__ import annotations
 import json
 import os
 import time
-import urllib.error
-import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from .common import auth_missing, base_record, classify_failure, find_key, get_json, print_record
+from .common import auth_missing, base_record, classify_failure, find_key, get_json, print_record, request_json
 
 AUTH_ENDPOINT = "https://openrouter.ai/api/v1/auth/key"
 CREDITS_ENDPOINT = "https://openrouter.ai/api/v1/credits"
@@ -36,6 +39,8 @@ EXCLUDED_API_PREFIX = "openai-codex"  # owned by the Codex collector
 
 PRICING_CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "agent-usage-plus"
 PRICING_TTL_SECONDS = 86400
+
+Rate = tuple[float, float, float, float]  # (input, output, cacheRead, cacheWrite) USD per token
 
 
 def local_day(value: Any) -> str:
@@ -80,20 +85,48 @@ def model_name(raw: Any) -> str:
     return value or "openrouter"
 
 
+def empty_bucket() -> dict[str, int]:
+    return {"inputTokens": 0, "outputTokens": 0, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0}
+
+
+def add_to_bucket(bucket: dict[str, int], input_tokens: int, output_tokens: int, cache_read: int, cache_write: int) -> None:
+    bucket["inputTokens"] += input_tokens
+    bucket["outputTokens"] += output_tokens
+    bucket["cacheReadInputTokens"] += cache_read
+    bucket["cacheCreationInputTokens"] += cache_write
+
+
+def bucket_tokens(bucket: dict[str, int]) -> int:
+    return (
+        bucket["inputTokens"] + bucket["outputTokens"]
+        + bucket["cacheReadInputTokens"] + bucket["cacheCreationInputTokens"]
+    )
+
+
+def bucket_usd(bucket: dict[str, int], rate: Rate) -> float:
+    prompt_rate, completion_rate, cache_read_rate, cache_write_rate = rate
+    return (
+        bucket["inputTokens"] * prompt_rate
+        + bucket["outputTokens"] * completion_rate
+        + bucket["cacheReadInputTokens"] * cache_read_rate
+        + bucket["cacheCreationInputTokens"] * cache_write_rate
+    )
+
+
 # ---- Local transcript scan -------------------------------------------------
 
-def scan_pi_sessions(rates: dict[str, tuple[float, float, float, float]]) -> dict[str, Any]:
-    """Aggregate openrouter-provider pi sessions into token and cost stats."""
+def scan_pi_sessions() -> tuple[dict[str, Any], dict[str, dict[str, dict[str, int]]]]:
+    """Aggregate openrouter-provider pi sessions into the standard local-stats
+    fields, plus a trailing-week (date -> model -> TokenBucket) matrix used to
+    price the cost block separately. No pricing happens here: this scan never
+    touches the network, so it runs even without a configured key."""
     now = datetime.now()
     today = now.strftime("%Y-%m-%d")
     recent_dates = [(now - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(HISTORY_DAYS - 1, -1, -1)]
-    recent = {day: {"date": day, "messageCount": 0, "cost": 0.0} for day in recent_dates}
+    recent = {day: {"date": day, "messageCount": 0} for day in recent_dates}
+    daily_model_tokens: dict[str, dict[str, dict[str, int]]] = {}
     today_tokens_by_model: dict[str, dict[str, int]] = {}
-    today_costs_by_model: dict[str, float] = {}
-    daily_costs_by_model: dict[str, dict[str, float]] = {}
-    week_tokens_by_model: dict[str, int] = {}
     model_usage: dict[str, dict[str, int]] = {}
-    week_costs_by_model: dict[str, float] = {}
     today_sessions: set[str] = set()
     active_days: set[str] = set()
     seen: set[str] = set()
@@ -149,79 +182,50 @@ def scan_pi_sessions(rates: dict[str, tuple[float, float, float, float]]) -> dic
                     continue
 
                 model = model_name(message.get("model"))
-                prompt_rate, completion_rate, cache_read_rate, cache_write_rate = rates.get(
-                    model, rates.get(model.split(":")[0], (0.0, 0.0, 0.0, 0.0))
-                )
-                cost = (
-                    input_tokens * prompt_rate
-                    + output_tokens * completion_rate
-                    + cache_read * cache_read_rate
-                    + cache_write * cache_write_rate
-                )
-
                 total_tokens = input_tokens + output_tokens + cache_read + cache_write
                 day = local_day(entry.get("timestamp") or message.get("timestamp"))
-                bucket = model_usage.setdefault(model, {
-                    "inputTokens": 0,
-                    "outputTokens": 0,
-                    "cacheReadInputTokens": 0,
-                    "cacheCreationInputTokens": 0,
-                })
-                bucket["inputTokens"] += input_tokens
-                bucket["outputTokens"] += output_tokens
-                bucket["cacheReadInputTokens"] += cache_read
-                bucket["cacheCreationInputTokens"] += cache_write
+
+                bucket = model_usage.setdefault(model, empty_bucket())
+                add_to_bucket(bucket, input_tokens, output_tokens, cache_read, cache_write)
 
                 if day in recent:
                     recent[day]["messageCount"] += total_tokens
-                    recent[day]["cost"] = round(recent[day].get("cost", 0.0) + cost, 6)
-                    week_tokens_by_model[model] = week_tokens_by_model.get(model, 0) + total_tokens
-                    day_models = daily_costs_by_model.setdefault(day, {})
-                    day_models[model] = round(day_models.get(model, 0.0) + cost, 6)
+                    day_models = daily_model_tokens.setdefault(day, {})
+                    day_bucket = day_models.setdefault(model, empty_bucket())
+                    add_to_bucket(day_bucket, input_tokens, output_tokens, cache_read, cache_write)
 
                 if day == today:
                     today_prompts += 1
                     today_sessions.add(message_key)
                     today_total_tokens += total_tokens
-                    today_bucket = today_tokens_by_model.setdefault(model, {
-                        "inputTokens": 0, "outputTokens": 0,
-                        "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0,
-                    })
-                    today_bucket["inputTokens"] += input_tokens
-                    today_bucket["outputTokens"] += output_tokens
-                    today_bucket["cacheReadInputTokens"] += cache_read
-                    today_bucket["cacheCreationInputTokens"] += cache_write
-                    today_costs_by_model[model] = round(today_costs_by_model.get(model, 0.0) + cost, 6)
+                    today_bucket = today_tokens_by_model.setdefault(model, empty_bucket())
+                    add_to_bucket(today_bucket, input_tokens, output_tokens, cache_read, cache_write)
 
                 total_prompts += 1
                 total_sessions.add(message_key)
                 active_days.add(day)
-                week_costs_by_model[model] = round(week_costs_by_model.get(model, 0.0) + cost, 6)
 
-    return {
+    stats = {
         "todayPrompts": today_prompts,
         "todaySessions": len(today_sessions),
         "todayTotalTokens": today_total_tokens,
         "todayTokensByModel": today_tokens_by_model,
-        "todayCostsByModel": today_costs_by_model,
         "recentDays": [recent[day] for day in recent_dates],
         "totalPrompts": total_prompts,
         "totalSessions": len(total_sessions),
         "activeDays": len(active_days),
         "activeDates": sorted(active_days),
         "modelUsage": model_usage,
-        "weekCostsByModel": week_costs_by_model,
-        "weekTokensByModel": week_tokens_by_model,
-        "dailyCostsByModel": daily_costs_by_model,
     }
+    return stats, daily_model_tokens
 
 
-def load_model_rates() -> tuple[dict[str, tuple[float, float, float, float]], str]:
-    """Model id -> (input, output, cacheRead, cacheWrite) USD per million
-    tokens, from OpenRouter's public model catalogue, cached for a day.
-    Models the catalogue prices without a separate cache field fall back to
-    the input rate (or zero for free variants); anything malformed is
-    skipped rather than poisoning the whole table."""
+def load_model_rates() -> tuple[dict[str, Rate], str]:
+    """Model id -> (input, output, cacheRead, cacheWrite) USD per token, from
+    OpenRouter's public model catalogue, cached for a day. Models the
+    catalogue prices without a separate cache field fall back to the input
+    rate (or zero for free variants); anything malformed is skipped rather
+    than poisoning the whole table."""
     cache = PRICING_CACHE_DIR / "openrouter-pricing.json"
     try:
         if cache.is_file() and time.time() - cache.stat().st_mtime < PRICING_TTL_SECONDS:
@@ -235,12 +239,10 @@ def load_model_rates() -> tuple[dict[str, tuple[float, float, float, float]], st
     except Exception:
         pass
 
-    rates: dict[str, tuple[float, float, float, float]] = {}
+    rates: dict[str, Rate] = {}
     version = "openrouter-models-unknown"
     try:
-        request = urllib.request.Request(MODELS_ENDPOINT, headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(request, timeout=10) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        payload = request_json(MODELS_ENDPOINT)
         for model in payload.get("data") or []:
             pricing = model.get("pricing") or {}
             if not isinstance(pricing, dict):
@@ -272,6 +274,81 @@ def load_model_rates() -> tuple[dict[str, tuple[float, float, float, float]], st
     return rates, version
 
 
+def rate_for(rates: dict[str, Rate], model: str) -> Rate | None:
+    return rates.get(model) or rates.get(model.split(":")[0])
+
+
+def build_cost(
+    daily_model_tokens: dict[str, dict[str, dict[str, int]]],
+    rates: dict[str, Rate],
+    pricing_version: str,
+) -> dict[str, Any] | None:
+    """Contract-shaped cost estimate over the same trailing window as
+    ``recentDays``: byModel/byDay priced at published rates. A model missing
+    from the catalogue is never invented as $0 — it is named in
+    ``unknownModels`` and its tokens excluded from the subtotal."""
+    week_usage: dict[str, dict[str, int]] = {}
+    unknown: set[str] = set()
+    by_day: list[dict[str, Any]] = []
+    active_days = 0
+
+    for date in sorted(daily_model_tokens):
+        day_models = daily_model_tokens[date]
+        day_usd = 0.0
+        day_has_tokens = False
+        for model, bucket in day_models.items():
+            tokens = bucket_tokens(bucket)
+            if tokens == 0:
+                continue
+            day_has_tokens = True
+            week_bucket = week_usage.setdefault(model, empty_bucket())
+            add_to_bucket(
+                week_bucket, bucket["inputTokens"], bucket["outputTokens"],
+                bucket["cacheReadInputTokens"], bucket["cacheCreationInputTokens"],
+            )
+            rate = rate_for(rates, model)
+            if rate is None:
+                unknown.add(model)
+                continue
+            day_usd += bucket_usd(bucket, rate)
+        if day_has_tokens:
+            active_days += 1
+        if day_usd > 0:
+            by_day.append({"date": date, "usd": round(day_usd, 2)})
+
+    by_model: list[dict[str, Any]] = []
+    total_usd = 0.0
+    priced_tokens = 0
+    unpriced_tokens = 0
+    for model, bucket in week_usage.items():
+        tokens = bucket_tokens(bucket)
+        rate = rate_for(rates, model)
+        if rate is None:
+            unpriced_tokens += tokens
+            continue
+        usd = bucket_usd(bucket, rate)
+        total_usd += usd
+        priced_tokens += tokens
+        by_model.append({"model": model, "usd": round(usd, 2), "tokens": tokens})
+
+    if priced_tokens == 0 and unknown:
+        return None  # every used model is unpriced: no fabricated $0
+
+    by_model.sort(key=lambda entry: -entry["usd"])
+    return {
+        "estimateUsd": round(total_usd, 2),
+        "period": f"{HISTORY_DAYS}d",
+        "pricingVersion": pricing_version,
+        "byModel": by_model,
+        "byDay": by_day,
+        "incomplete": bool(unknown),
+        "unknownModels": sorted(unknown)[:20],
+        "pricedTokens": priced_tokens,
+        "unpricedTokens": unpriced_tokens,
+        "activeDays": active_days,
+    }
+
+
 # ---- Balance ---------------------------------------------------------------
 
 def key_budget_balance(payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -289,14 +366,30 @@ def key_budget_balance(payload: dict[str, Any]) -> dict[str, Any] | None:
     return balance
 
 
+def record_from_payload(payload: dict[str, Any], record: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Map a ``GET /api/v1/auth/key`` response onto the panel record. Pure and
+    payload-only, so tests can exercise it without a network call; ``collect``
+    passes in the record it already has (local stats included) rather than
+    starting a fresh one."""
+    if record is None:
+        record = base_record("openrouter", "OpenRouter", "OpenRouter API key")
+    balance = key_budget_balance(payload)
+    if balance is not None:
+        record["balance"] = balance
+        reset = (payload.get("data") or {}).get("limit_reset")
+        if isinstance(reset, str) and reset in {"daily", "weekly", "monthly"}:
+            record["tierLabel"] = f"OpenRouter API key · {reset} budget"
+    else:
+        # A current-key probe can succeed even if that key has no spending
+        # limit. This is a normal account configuration, not a panel error.
+        record["tierLabel"] = "OpenRouter API key · no key budget"
+    record["ready"] = True
+    return record
+
+
 def credits_balance(key: str) -> dict[str, Any]:
     """Account prepaid-credit ledger from GET /api/v1/credits."""
-    request = urllib.request.Request(
-        CREDITS_ENDPOINT,
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(request, timeout=10) as response:
-        payload = json.loads(response.read().decode("utf-8"))
+    payload = get_json(CREDITS_ENDPOINT, key)
     data = payload.get("data") or {}
     funded = number(data.get("total_credits"))
     spent = number(data.get("total_usage"))
@@ -310,86 +403,45 @@ def credits_balance(key: str) -> dict[str, Any]:
     }
 
 
-def fetch_balance(key: str) -> dict[str, Any] | None:
-    """Prefer the key's own budget; fall back to the account credit ledger
-    for prepaid accounts without a key limit. None means no balance is
-    knowable for this key."""
-    try:
-        request = urllib.request.Request(
-            AUTH_ENDPOINT,
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(request, timeout=10) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        balance = key_budget_balance(payload)
-        if balance is not None:
-            balance["estimated"] = False
-            return balance
-    except Exception:
-        pass
-
-    try:
-        return credits_balance(key)
-    except Exception:
-        return None
-
-
 # ---- Record ----------------------------------------------------------------
 
 def collect() -> dict[str, Any]:
     record = base_record("openrouter", "OpenRouter", "OpenRouter API key")
 
-    rates, pricing_version = load_model_rates()
-    stats = scan_pi_sessions(rates)
+    stats, daily_model_tokens = scan_pi_sessions()
     record.update(stats)
     record["hasLocalStats"] = True
     record["hasPromptStats"] = True
-    record["ready"] = True
-
-    # Contract-shaped cost estimate: pi-session tokens priced at published
-    # rates. byModel covers the trailing week (the same window as
-    # recentDays); byDay lines up one-to-one with it. A model missing from
-    # the catalogue is unpriced, never invented as $0.
-    week_costs = stats.get("weekCostsByModel") or {}
-    model_usage = stats.get("modelUsage") or {}
-    if week_costs:
-        by_model = []
-        priced_tokens = 0
-        for model, cost in sorted(week_costs.items(), key=lambda kv: -kv[1]):
-            bucket = model_usage.get(model) or {}
-            tokens = sum(token_count(bucket.get(key)) for key in (
-                "inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"
-            ))
-            by_model.append({"model": model, "usd": round(cost, 2), "tokens": tokens})
-            priced_tokens += tokens
-        by_day = [
-            {"date": day.get("date") if isinstance(day, dict) else str(day),
-             "usd": round(float(day.get("cost") or 0.0), 2)}
-            for day in stats.get("recentDays", [])
-        ]
-        record["cost"] = {
-            "estimateUsd": round(sum(entry["usd"] for entry in by_model), 2),
-            "period": "7d",
-            "byModel": by_model,
-            "byDay": by_day,
-            "pricedTokens": priced_tokens,
-            "unpricedTokens": 0,
-            "pricingVersion": pricing_version,
-            "incomplete": False,
-        }
 
     key = find_key("OPENROUTER_API_KEY", "openrouter")
     if not key:
-        record["tierLabel"] = "OpenRouter API key · no key budget"
-        return record
+        # No credentials yet: local transcript stats still show, but the
+        # catalogue that prices them is never fetched, and the record stays
+        # genuinely not-ready until a key is configured.
+        return auth_missing(record, AUTH_HELP)
 
-    balance = fetch_balance(key)
-    if balance is not None:
-        record["balance"] = balance
-        record["tierLabel"] = "Prepaid"
-    else:
-        record["usageStatusText"] = "OpenRouter balance unavailable"
-        record["authHelpText"] = AUTH_HELP
+    rates, pricing_version = load_model_rates()
+    cost = build_cost(daily_model_tokens, rates, pricing_version)
+    if cost is not None:
+        record["cost"] = cost
+
+    try:
+        payload = get_json(AUTH_ENDPOINT, key)
+    except Exception as exc:  # converted to a display record, never leaked
+        return classify_failure(record, "OpenRouter", exc, AUTH_HELP)
+
+    record_from_payload(payload, record)
+    if "balance" not in record:
+        # The key has no configured spending limit; fall back to the
+        # account's prepaid-credit ledger so prepaid accounts still get a
+        # balance card. If that is unavailable too, "no key budget" (already
+        # set by record_from_payload) is still a normal account
+        # configuration, not a panel error.
+        try:
+            record["balance"] = credits_balance(key)
+            record["tierLabel"] = "Prepaid"
+        except Exception:
+            pass
 
     return record
 

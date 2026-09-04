@@ -133,6 +133,7 @@ def check_id($r):
 def check_scalars($r):
   [
     (if ($r|has("name")) and ($r.name|type) != "string" then "`name` must be a string (got \($r.name|type))" else empty end),
+    (if ($r|has("brand")) and (($r.brand|id_charset)|not) then "`brand` must match ^[A-Za-z0-9_-]{1,64}$ (got: \($r.brand|trunc(50)|tojson))" else empty end),
     (if ($r|has("schemaVersion")) and ($r.schemaVersion|is_int|not) then "`schemaVersion` must be an integer" else empty end),
     (if ($r|has("updatedAt")) and ($r.updatedAt != "") and ($r.updatedAt|iso_datetime|not) then "`updatedAt` is not ISO-8601 (got: \($r.updatedAt|trunc(40)|tojson))" else empty end),
     (["ready","hasLocalStats","hasPromptStats","retryAdvised"][] as $f
