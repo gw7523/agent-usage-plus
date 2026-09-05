@@ -8,6 +8,7 @@ import "logic/thresholds.js" as Thresholds
 import "logic/format.js" as Format
 import "logic/aggregate.js" as Aggregate
 import "logic/history.js" as History
+import "logic/agents.js" as Agents
 import "logic/pace.js" as Pace
 import "logic/cost-analytics.js" as CostAnalytics
 import "logic/notifications.js" as Notify
@@ -340,8 +341,12 @@ Panel {
     usage.refreshAll(true)
   }
 
-  function launchAgent() {
-    if (root.bar) root.bar.run("omarchy-agent --pick")
+  // Right-click launches the agent of the mark that was clicked. Passing no
+  // id (the whole-slot button, the overflow button) keeps the old behavior:
+  // omarchy-agent reads ~/.config/omarchy/defaults/agent, which is the only
+  // sensible answer when the click doesn't name a provider.
+  function launchAgent(providerId) {
+    if (root.bar) root.bar.run(Agents.launchCommandFor(providerId))
     root.close()
   }
 
@@ -752,6 +757,7 @@ Panel {
     cursor: { defaultAsset: "cursor.svg", lightAsset: "cursor-light.svg" },
     kimi: { defaultAsset: "kimi.svg", lightAsset: "kimi-light.svg" },
     xai: { defaultAsset: "xai.svg", lightAsset: "xai-light.svg" },
+    grok: { defaultAsset: "grok.svg", lightAsset: "grok-light.svg" },
     zai: { defaultAsset: "zai.svg", lightAsset: "zai-light.svg" },
     devin: { defaultAsset: "devin.svg" },
     "opencode-go": { defaultAsset: "opencode-go.svg", lightAsset: "opencode-go-light.svg" }
@@ -1360,7 +1366,8 @@ Panel {
           text: ""
           labelVisible: false
           onPressed: function(buttonCode) {
-            if (buttonCode === Qt.RightButton) root.launchAgent()
+            if (buttonCode === Qt.RightButton)
+              root.launchAgent(providerGroup.modelData ? providerGroup.modelData.providerId : "")
             else if (buttonCode === Qt.MiddleButton) {
               if (usage.cycleBarProviders.length > 0) usage.cycleNext()
               else root.selectProvider(root.providerIndex + 1)
@@ -3455,6 +3462,147 @@ Panel {
                 Text {
                   width: parent.width
                   text: "Available mode switches percentages, meters, and warning values together. Meter colors are optional; alerts remain opt-in."
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+              }
+            }
+
+            // ----- Multi-device sync -----
+            // The panel never syncs anything itself — it only reads and
+            // writes one JSON snapshot per machine into this folder. Combine
+            // usage across machines by pointing every one of them at the
+            // same folder that's already kept identical some other way
+            // (Syncthing, Nextcloud, a network mount — anything works).
+            BorderSurface {
+              id: syncSection
+              width: parent.width
+              implicitHeight: syncContent.implicitHeight + Style.space(28)
+              color: root.alpha(root.foreground, 0.035)
+              borderSpec: Border.flat(root.alpha(root.foreground, 0.12), 1)
+              radius: Style.cornerRadius
+
+              Column {
+                id: syncContent
+                anchors.fill: parent
+                anchors.margins: Style.space(14)
+                spacing: Style.space(10)
+
+                // Same draft pattern as behaviourContent above: the folder
+                // path only ever changes here or on Save, so a keystroke in
+                // progress can't be clobbered by a periodic settings reload.
+                property string draftSyncDir: usage.syncDir
+                readonly property bool syncDirDirty: draftSyncDir !== usage.syncDir
+
+                function resyncDraft() { draftSyncDir = usage.syncDir }
+                function saveDraft() { usage.setSyncDir(draftSyncDir) }
+
+                Connections {
+                  target: settingsSection
+                  function onVisibleChanged() { if (settingsSection.visible) syncContent.resyncDraft() }
+                }
+
+                Text {
+                  text: "Multi-device sync"
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                }
+
+                Text {
+                  width: parent.width
+                  text: "Combine today's tokens and history from every machine that shares this folder. Point each machine at the same already-synced folder (Syncthing, Nextcloud, a network mount — any tool that keeps a directory identical everywhere); this panel only reads and writes its own snapshot inside it, never the syncing itself."
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+
+                Row {
+                  spacing: Style.space(10)
+
+                  ToggleSwitch {
+                    anchors.verticalCenter: parent.verticalCenter
+                    checked: usage.syncEnabled
+                    foreground: root.foreground
+                    accent: Color.accent
+                    onToggled: usage.setSyncEnabled(!usage.syncEnabled)
+                  }
+
+                  Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Enable sync"
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                  }
+                }
+
+                Row {
+                  visible: usage.syncEnabled
+                  spacing: Style.space(10)
+
+                  Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Style.space(320)
+                    height: Style.space(30)
+                    radius: Style.cornerRadius
+                    color: root.alpha(root.foreground, 0.06)
+                    border.width: 1
+                    border.color: root.alpha(root.foreground, syncDirInput.activeFocus ? 0.4 : 0.2)
+
+                    TextInput {
+                      id: syncDirInput
+                      anchors.fill: parent
+                      anchors.leftMargin: Style.space(8)
+                      anchors.rightMargin: Style.space(8)
+                      verticalAlignment: TextInput.AlignVCenter
+                      clip: true
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                      text: syncContent.draftSyncDir
+                      onTextEdited: syncContent.draftSyncDir = text
+                      onAccepted: syncContent.saveDraft()
+
+                      Text {
+                        visible: syncDirInput.text === "" && !syncDirInput.activeFocus
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "~/Sync/agent-usage-plus"
+                        color: root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                      }
+                    }
+                  }
+
+                  Button {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Save"
+                    enabled: syncContent.syncDirDirty
+                    selected: enabled
+                    bordered: true
+                    foreground: root.foreground
+                    accent: Color.accent
+                    fontFamily: root.fontFamily
+                    fontSize: Style.font.caption
+                    horizontalPadding: Style.space(12)
+                    verticalPadding: Style.space(4)
+                    onClicked: syncContent.saveDraft()
+                  }
+                }
+
+                Text {
+                  visible: usage.syncEnabled
+                  width: parent.width
+                  text: String(usage.syncDir || "").trim() === ""
+                    ? "Set a folder above, then Save, to start writing this device's snapshot into it."
+                    : (usage.syncStatusText !== "" ? usage.syncStatusText
+                      : (usage.aggregateData && usage.aggregateData.deviceCount > 1
+                        ? "Merged from " + usage.aggregateData.deviceCount + " devices"
+                        : "Waiting for another device to write into this folder…"))
                   color: root.dim
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption

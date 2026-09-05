@@ -25,6 +25,10 @@ unchanged.
 three colors are Cognition's published Devin palette; square viewBox padding
 keeps its visible size aligned with the other provider marks at bar scale.
 
+`grok.svg`/`grok-light.svg` use xAI's Grok product mark from
+[lobe-icons](https://github.com/lobehub/lobe-icons) under its MIT license,
+recolored into this project's existing white/`#111111` dark/light scheme.
+
 Copyright © 2023 LobeHub.
 
 Copyright (c) 2026 Peter Steinberger

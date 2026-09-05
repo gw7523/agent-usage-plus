@@ -9,7 +9,7 @@ installer or timer described below.
 
 | Provider | What the collector reads | First-class credential state |
 |---|---|---|
-| OpenRouter | current API key's optional spending limit, remaining budget, and usage from `GET /api/v1/auth/key` | `OPENROUTER_API_KEY` or `collectors.json` entry; otherwise **Waiting for API key** tells the user exactly how to set one |
+| OpenRouter | current API key's optional spending limit and remaining budget from `GET /api/v1/auth/key` (falling back to the account's prepaid-credit ledger from `GET /api/v1/credits` for keys with no configured limit); local token history and a `cost` estimate from pi session transcripts (`~/.pi/agent/sessions`), priced against OpenRouter's own public model catalogue | `OPENROUTER_API_KEY` or `collectors.json` entry; otherwise **Waiting for API key** tells the user exactly how to set one — local transcript stats still show, but the model catalogue is never fetched until a key is configured |
 | DeepSeek | account's available credit ledger from `GET /user/balance` | `DEEPSEEK_API_KEY` or `collectors.json` entry; otherwise **Waiting for API key** tells the user exactly how to set one |
 | xAI / Grok | team's authoritative prepaid API-credit balance from xAI's Management API | `XAI_MANAGEMENT_API_KEY` (not an inference `XAI_API_KEY`); team-scoped keys discover the team automatically, organization keys also need `XAI_TEAM_ID` |
 | Z.AI / GLM | Coding Plan quota windows from the read-only monitor endpoint (`/api/monitor/usage/quota/limit`), with global and China-region hosts and optional team scope | `Z_AI_API_KEY`/`ZAI_API_KEY` or a China-region alias (`BIGMODEL_API_KEY`, `ZHIPU_API_KEY`, `ZHIPUAI_API_KEY`, `GLM_API_KEY`); missing key, invalid region/scope, missing team selectors, rejected key, and endpoint failures are separate visible states |
@@ -25,10 +25,19 @@ Both endpoint references are provider documentation: [OpenRouter current-key
 metadata](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-key)
 and [DeepSeek balance](https://api-docs.deepseek.com/api/get-user-balance).
 OpenRouter's endpoint is a *per-key* budget: if the key has no configured
-spending limit the record deliberately says “no key budget” instead of
-mistaking account credit for one. DeepSeek can return both CNY and USD
-ledgers; the panel record has one currency slot, so USD is preferred when
-present and otherwise the first provider-returned ledger is shown.
+spending limit the collector falls back to the account's prepaid-credit
+ledger (`GET /api/v1/credits`); if that is unavailable too, the record
+deliberately says “no key budget” instead of mistaking account credit for
+one. DeepSeek can return both CNY and USD ledgers; the panel record has one
+currency slot, so USD is preferred when present and otherwise the first
+provider-returned ledger is shown.
+
+OpenRouter's `cost` estimate is priced from its own public model catalogue
+(`GET /api/v1/models`, cached for a day) rather than the bundled
+`logic/cost.js` catalogue used by Claude and Codex: OpenRouter routes to
+hundreds of third-party models whose prices that static catalogue has no way
+to know. A model missing from the catalogue is never priced as $0 — it is
+named in `unknownModels` and the subtotal is marked `incomplete`.
 
 ## Install and run
 
