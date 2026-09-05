@@ -28,9 +28,14 @@ function priceFor(provider, model) {
   return p && p.models[String(model || "")] ? p.models[String(model || "")] : null
 }
 
-// Returns `{ cost, unknownModels, pricingVersion }`. `cost` is null whenever
-// a used model has no exact catalogue entry; callers must surface
-// unknownModels instead of publishing a misleading partial estimate.
+function activeDayCount(value) {
+  var n = Number(value)
+  return isFinite(n) && n > 0 ? Math.min(100000, Math.floor(n)) : 0
+}
+
+// Returns `{ cost, unknownModels, pricingVersion }`. `cost` is null only when
+// every used model has no exact catalogue entry; a mixed result is an
+// explicitly partial subtotal whose callers must surface `unknownModels`.
 // `dailyModelUsage` is optional: `{ "YYYY-MM-DD": { model: TokenBucket }}`.
 function calculateCost(input) {
   var options = input || {}
@@ -89,7 +94,12 @@ function calculateCost(input) {
       incomplete: unknown.length > 0,
       unknownModels: unknown.sort(),
       pricedTokens: Math.round(pricedTokens),
-      unpricedTokens: Math.round(unpricedTokens)
+      unpricedTokens: Math.round(unpricedTokens),
+      // The base transcript collector knows how many distinct days its
+      // aggregate covers even when it cannot retain a per-day/model matrix.
+      // Keep that bounded fact so the UI can still calculate a truthful
+      // average instead of displaying a broken zero.
+      activeDays: activeDayCount(options.activeDays)
     }
   }
 }

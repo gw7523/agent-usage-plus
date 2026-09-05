@@ -79,7 +79,12 @@ def decorate(record: dict[str, Any], provider: str, period: str) -> dict[str, An
     helper = helper_path()
     if helper is None:
         return record
-    payload = {"provider": provider, "period": period, "modelUsage": record.get("modelUsage") or {}}
+    payload = {
+        "provider": provider,
+        "period": period,
+        "modelUsage": record.get("modelUsage") or {},
+        "activeDays": record.get("activeDays", 0),
+    }
     try:
         result = subprocess.run(
             [str(helper)], input=json.dumps(payload), text=True, capture_output=True,

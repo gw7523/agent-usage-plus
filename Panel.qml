@@ -8,7 +8,11 @@ import "logic/thresholds.js" as Thresholds
 import "logic/format.js" as Format
 import "logic/aggregate.js" as Aggregate
 import "logic/history.js" as History
+import "logic/agents.js" as Agents
 import "logic/pace.js" as Pace
+import "logic/cost-analytics.js" as CostAnalytics
+import "logic/notifications.js" as Notify
+import "logic/meter-colors.js" as MeterColors
 
 Panel {
   id: root
@@ -18,6 +22,11 @@ Panel {
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color urgent: bar ? bar.urgent : Color.urgent
+  // The stable traffic-light colors are opt-in. With the option off, healthy
+  // meters retain the live foreground and Critical retains Omarchy's urgent
+  // color, preserving the widget's original theme contract.
+  readonly property color healthy: "#22C55E"
+  readonly property color colorfulCritical: "#EF4444"
   // A fixed amber rather than a foreground/urgent blend: warn needs to read
   // as its own distinct traffic-light color at a glance, not a paler shade
   // of critical that's easy to mistake for it against a dim theme.
@@ -90,8 +99,14 @@ Panel {
   // rates" estimate. Claude and Codex can populate it from local transcript
   // history when the optional cost decorator is installed.
   readonly property var cost: provider ? (provider.cost || null) : null
-  readonly property bool costHasModelBreakdown: !!cost && Array.isArray(cost.byModel)
-    && cost.byModel.length > 0
+  // Cost analytics are deliberately session-only and Details-only. The
+  // compact view is a quick status glance; showing a derived API price there
+  // made it compete with the real subscription allowance and duplicated the
+  // same number again below.
+  readonly property var costSummary: expanded && cost ? CostAnalytics.summary(cost, provider) : null
+  readonly property var costModelRows: costSummary ? costSummary.models : []
+  readonly property var costDailyRows: costSummary ? costSummary.days : []
+  readonly property var costProviderRows: expanded ? CostAnalytics.providerRows(providers) : []
 
   // ---------------------------------------------------------- history chart
   //
@@ -140,6 +155,10 @@ Panel {
   // read straight from the manifest schema's defaults when unset.
   readonly property int warnThresholdPct: Number(usage.setting("warnThresholdPct", Thresholds.DEFAULT_WARN_PCT))
   readonly property int criticalThresholdPct: Number(usage.setting("criticalThresholdPct", Thresholds.DEFAULT_CRITICAL_PCT))
+  readonly property int displayWarnThresholdPct: usage.showAvailablePercentage
+    ? 100 - warnThresholdPct : warnThresholdPct
+  readonly property int displayCriticalThresholdPct: usage.showAvailablePercentage
+    ? 100 - criticalThresholdPct : criticalThresholdPct
   readonly property var severityThresholds: ({ warn: warnThresholdPct, critical: criticalThresholdPct })
 
   // ---------------------------------------------------------------- settings
@@ -224,6 +243,9 @@ Panel {
       rows.push({
         providerId: id,
         providerName: String(record.name || record.id),
+        // ProviderMark resolves brand-first; without this a branded account
+        // record shows its real mark everywhere except the settings list.
+        brand: Aggregate.sanitizeBrand(record.brand),
         enabled: providerSettingEnabled(id),
         showInBar: providerSettingShowInBar(id),
         barRole: providerSettingBarRole(id),
@@ -253,8 +275,11 @@ Panel {
     return Thresholds.severityFor(percent * 100, root.severityThresholds)
   }
   function colorForSeverity(severity) {
-    if (severity === "critical") return root.urgent
-    if (severity === "warn") return root.warn
+    var role = MeterColors.paletteRole(severity, usage.colorfulUsageMeters)
+    if (role === "critical-red") return root.colorfulCritical
+    if (role === "critical") return root.urgent
+    if (role === "warn") return root.warn
+    if (role === "healthy") return root.healthy
     return root.foreground
   }
 
@@ -316,8 +341,12 @@ Panel {
     usage.refreshAll(true)
   }
 
-  function launchAgent() {
-    if (root.bar) root.bar.run("omarchy-agent --pick")
+  // Right-click launches the agent of the mark that was clicked. Passing no
+  // id (the whole-slot button, the overflow button) keeps the old behavior:
+  // omarchy-agent reads ~/.config/omarchy/defaults/agent, which is the only
+  // sensible answer when the click doesn't name a provider.
+  function launchAgent(providerId) {
+    if (root.bar) root.bar.run(Agents.launchCommandFor(providerId))
     root.close()
   }
 
@@ -515,26 +544,98 @@ Panel {
     return peak
   }
 
-  function apiCostForModel(row) {
-    if (!row || !root.cost || !Array.isArray(root.cost.byModel)) return null
-    var modelId = String(row.id || "")
-    var friendly = String(row.name || "")
-    for (var i = 0; i < root.cost.byModel.length; i++) {
-      var entry = root.cost.byModel[i] || {}
-      if (String(entry.model || "") === modelId
-        || usage.friendlyModelName(entry.model) === friendly) return Number(entry.usd || 0)
+  function unpricedModelText(cost) {
+    if (!cost || !cost.incomplete) return ""
+    var unknown = Array.isArray(cost.unknownModels) ? cost.unknownModels : []
+    var names = []
+    for (var i = 0; i < unknown.length; i++) {
+      var name = usage.friendlyModelName(unknown[i])
+      if (names.indexOf(name) < 0) names.push(name)
+    }
+    return names.length > 0
+      ? "Excluded from estimate: " + names.join(", ") + "."
+      : "Some models have no published rate and are excluded."
+  }
+
+  function costCoverageText(coverage) {
+    var value = Number(coverage)
+    return isFinite(value) && value >= 0 ? Math.round(value * 100) + "% priced" : "Rate coverage unavailable"
+  }
+
+  function costProviderRow(p) {
+    if (!p) return null
+    var id = String(p.providerId || "")
+    for (var i = 0; i < root.costProviderRows.length; i++) {
+      if (String(root.costProviderRows[i].providerId || "") === id) return root.costProviderRows[i]
     }
     return null
   }
 
-  function unpricedModelText(cost) {
-    if (!cost || !cost.incomplete) return ""
-    var unknown = cost.unknownModels || []
-    var names = []
-    for (var i = 0; i < unknown.length; i++) names.push(usage.friendlyModelName(unknown[i]))
-    return names.length > 0
-      ? "API USD is partial. No published rate for " + names.join(", ") + "."
-      : "API USD is partial because some models have no published rate."
+  function costPlanValue(row) {
+    if (!row) return "—"
+    if (row.usageKind === "subscription" && Number(row.subscriptionPercent) >= 0)
+      return Format.formatPercent(Number(row.subscriptionPercent))
+    if (row.usageKind === "api-credit" && Number(row.balanceRemaining) >= 0) {
+      return root.formatMoney(row.balanceRemaining, row.balanceCurrency)
+    }
+    return "—"
+  }
+
+  function costPlanLabel(row) {
+    if (!row) return "On plan"
+    if (row.usageKind === "subscription") return "On subscription"
+    if (row.usageKind === "api-credit") return "API credit left"
+    return "Plan usage"
+  }
+
+  // Kept short on purpose: this renders inside a fixed-width column next to
+  // the plan/API figures, and a long sentence here just gets silently
+  // ellipsized — the "resets in" countdown is the one thing that must
+  // always fit.
+  function costPlanHint(row) {
+    if (!row) return "No provider data"
+    if (row.usageKind === "subscription") {
+      var resetAt = String(row.subscriptionResetAt || "")
+      if (resetAt !== "") {
+        var remainingMs = new Date(resetAt).getTime() - root.nowMs
+        if (remainingMs > 0) return "Resets in " + root.formatDuration(remainingMs)
+      }
+      return String(row.subscriptionTitle || "Session") + " quota"
+    }
+    if (row.usageKind === "api-credit") {
+      if (Number(row.balanceFunded) > 0 && Number(row.balanceSpent) >= 0) {
+        var spent = root.formatMoney(row.balanceSpent, row.balanceCurrency) + " of "
+          + root.formatMoney(row.balanceFunded, row.balanceCurrency) + " spent"
+        return row.balanceEstimated ? spent + " · est." : spent
+      }
+      return row.balanceEstimated ? "Estimated balance" : "API balance"
+    }
+    if (row.statusText !== "") return "Provider data unavailable"
+    return "No quota or balance reported"
+  }
+
+  function costApiValue(row) {
+    return row && row.hasCost ? root.formatUsd(row.estimateUsd) : "—"
+  }
+
+  function costApiHint(row) {
+    if (!row || !row.hasCost) return "No pricing data"
+    if (row.incomplete) return "Partial estimate"
+    return "API rate estimate"
+  }
+
+  // Combines the two small-print footer lines (price-catalogue coverage and
+  // version) into one so the model breakdown doesn't end in a stack of
+  // near-identical caption rows.
+  function costFooterText(cost, summary) {
+    var parts = []
+    if (summary && Number(summary.coverage) >= 0) {
+      parts.push(summary.totalTokens > 0
+        ? root.costCoverageText(summary.coverage) + " of " + usage.formatTokenCount(summary.totalTokens) + " tokens"
+        : root.costCoverageText(summary.coverage))
+    }
+    if (cost && String(cost.pricingVersion || "") !== "") parts.push("catalogue " + String(cost.pricingVersion))
+    return parts.join(" · ")
   }
 
   function dayTooltip(day, today) {
@@ -671,7 +772,10 @@ Panel {
   // than trusted to have gone through the right upstream function.
   function iconCandidatesForProvider(p, surfaceColor) {
     if (!p) return []
-    var id = String(p.providerId || "")
+    // A record may declare a `brand` naming whose mark it renders with
+    // (e.g. a second `claude-work` account using the Claude mark); it went
+    // through sanitizeBrand upstream but is re-validated here like the id.
+    var id = String(p.brand || p.providerId || "")
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) return []
     var assets = root.providerIconAssets[id]
     if (!assets) return []
@@ -684,7 +788,10 @@ Panel {
 
   function iconCandidatesForBarProvider(p) {
     if (!p) return []
-    var id = String(p.providerId || "")
+    // A record may declare a `brand` naming whose mark it renders with
+    // (e.g. a second `claude-work` account using the Claude mark); it went
+    // through sanitizeBrand upstream but is re-validated here like the id.
+    var id = String(p.brand || p.providerId || "")
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) return []
     var assets = root.providerIconAssets[id]
     if (!assets) return []
@@ -704,7 +811,10 @@ Panel {
   // the rest of the set don't read as larger. See providerIconAssets.
   function iconScaleForProvider(p) {
     if (!p) return 1
-    var id = String(p.providerId || "")
+    // Same brand-first resolution as the candidate lookups: a branded
+    // account record must render at the exact same size as the provider it
+    // borrows the mark from, or two chips of one provider read as different.
+    var id = String(p.brand || p.providerId || "")
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) return 1
     var assets = root.providerIconAssets[id]
     var scale = assets ? Number(assets.scale) : 1
@@ -773,6 +883,11 @@ Panel {
     function toggle(): void { root.toggle() }
     function refresh(): string { root.refreshNow(); return "ok" }
     function next(): string { root.selectProvider(root.providerIndex + 1); return "ok" }
+    // Exposed for the same reason as refresh(): it gives diagnostics and
+    // release QA a deterministic path through the exact function the button
+    // calls, including its queue and visible result state.
+    function testNotification(): string { root.sendTestNotification(); return "queued" }
+    function notificationStatus(): string { return root.notificationTestStatus }
   }
 
   // The provider's primary window: session when it reports one (Claude),
@@ -812,7 +927,42 @@ Panel {
   }
   function providerPercentText(p) {
     var pct = providerPercent(p)
-    return pct >= 0 ? Format.formatPercent(pct) : "…"
+    return pct >= 0 ? Format.formatPercent(pct, usage.showAvailablePercentage) : "…"
+  }
+  function displayPercent(percent) {
+    return Format.displayPercent(percent, usage.showAvailablePercentage)
+  }
+
+  // Everything the bar chip compresses away, on hover: which account this
+  // is, its plan, every limit window with its reset countdown, and any
+  // credit balance. One line per fact, so multiple accounts of the same
+  // provider read apart without opening the panel.
+  function barProviderTooltip(p) {
+    if (!p) return ""
+    var lines = []
+    var head = String(p.providerName || p.providerId || "Provider")
+    if (p.tierLabel) head += " · " + String(p.tierLabel)
+    lines.push(head)
+    var windows = limitWindows(p)
+    for (var i = 0; i < windows.length; i++) {
+      var w = windows[i]
+      if (w.percent < 0) continue
+      var line = String(w.title || w.label || "Limit") + " " + Format.formatPercent(w.percent)
+      if (w.resetAt) {
+        var remainingMs = Date.parse(w.resetAt) - Date.now()
+        if (isFinite(remainingMs) && remainingMs > 0)
+          line += " · resets in " + Format.formatDuration(remainingMs)
+      }
+      lines.push(line)
+    }
+    var credit = p.balance || null
+    if (credit && Number(credit.remaining) >= 0) {
+      var creditLine = Format.formatMoney(Number(credit.remaining), credit.currency) + " left"
+      if (Number(credit.funded) > 0)
+        creditLine += " of " + Format.formatMoney(Number(credit.funded), credit.currency)
+      lines.push(creditLine)
+    }
+    return lines.join("\n")
   }
 
   // The weekly percent, when the bar's already showing session as the
@@ -848,8 +998,17 @@ Panel {
     target: usage
     function onNotificationsEnabledChanged() {
       if (usage.notificationsEnabled) root.checkThresholdNotifications()
-      else root.notificationQueue = []
+      else root.discardQueuedThresholdNotifications()
     }
+  }
+
+  function discardQueuedThresholdNotifications() {
+    var tests = []
+    for (var i = 0; i < root.notificationQueue.length; i++) {
+      var entry = root.notificationQueue[i]
+      if (entry && entry.isTest === true) tests.push(entry)
+    }
+    root.notificationQueue = tests
   }
 
   function notificationSignal(p) {
@@ -884,13 +1043,18 @@ Panel {
 
   property var notificationQueue: []
   property bool notificationRunning: false
+  property bool activeNotificationIsTest: false
+  property string notificationTestStatus: ""
 
   Process {
     id: notifyProcess
     running: false
     onExited: function(exitCode) {
+      if (root.activeNotificationIsTest)
+        root.notificationTestStatus = exitCode === 0 ? "Sent" : "Failed"
       if (exitCode !== 0)
-        console.warn("agents/notify", "notify-send failed:", notifyProcess.command.join(" "))
+        console.warn("agents/notify", "notification command failed:", notifyProcess.command.join(" "))
+      root.activeNotificationIsTest = false
       root.notificationRunning = false
       root.pumpNotificationQueue()
     }
@@ -901,12 +1065,16 @@ Panel {
     }
   }
 
-  // A manual, always-available way to confirm the notify-send pipeline
+  // A manual, always-available way to confirm Omarchy's notification pipeline
   // itself works — independent of notificationsEnabled and of waiting for a
   // real Warn/Critical crossing, which may be rare or slow to hit.
   function sendTestNotification() {
-    root.notificationQueue.push(["notify-send", "--app-name=Agent Usage Plus", "--urgency=normal",
-      "Agent Usage Plus", "Test notification — if you see this, notifications are working."])
+    root.notificationTestStatus = root.notificationRunning ? "Queued…" : "Sending…"
+    root.notificationQueue.push({
+      command: Notify.command("Agent Usage Plus",
+        "Test notification — if you see this, notifications are working.", "normal"),
+      isTest: true
+    })
     root.pumpNotificationQueue()
   }
 
@@ -916,7 +1084,11 @@ Panel {
     var urgency = severity === "critical" ? "critical" : "normal"
     var summary = name + " — " + (severity === "critical" ? "critical" : "warning")
     var body = signal.title + " at " + pct
-    root.notificationQueue.push(["notify-send", "--app-name=Agent Usage Plus", "--urgency=" + urgency, summary, body])
+      + (usage.showAvailablePercentage ? " available" : " used")
+    root.notificationQueue.push({
+      command: Notify.command(summary, body, urgency),
+      isTest: false
+    })
     root.pumpNotificationQueue()
   }
 
@@ -924,9 +1096,65 @@ Panel {
     if (root.notificationRunning) return
     if (root.notificationQueue.length === 0) return
     var next = root.notificationQueue.shift()
+    if (!next || !Array.isArray(next.command)) return root.pumpNotificationQueue()
     root.notificationRunning = true
-    notifyProcess.command = next
+    root.activeNotificationIsTest = next.isTest === true
+    if (root.activeNotificationIsTest) root.notificationTestStatus = "Sending…"
+    notifyProcess.command = next.command
     notifyProcess.running = true
+  }
+
+  // A compact metric tile keeps the important cost signals aligned without
+  // turning each one into another warning-looking sentence.
+  component CostMetric: Item {
+    id: costMetric
+    property string label: ""
+    property string valueText: ""
+    property string hint: ""
+
+    implicitHeight: metricContent.implicitHeight
+
+    Column {
+      id: metricContent
+      anchors.left: parent.left
+      anchors.right: parent.right
+      spacing: Style.space(2)
+
+      Text {
+        width: parent.width
+        text: costMetric.valueText
+        textFormat: Text.PlainText
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.subtitle
+        font.bold: true
+        horizontalAlignment: Text.AlignHCenter
+        elide: Text.ElideRight
+      }
+
+      Text {
+        width: parent.width
+        text: costMetric.label
+        textFormat: Text.PlainText
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        horizontalAlignment: Text.AlignHCenter
+        elide: Text.ElideRight
+      }
+
+      Text {
+        visible: costMetric.hint !== ""
+        width: parent.width
+        text: costMetric.hint
+        textFormat: Text.PlainText
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        horizontalAlignment: Text.AlignHCenter
+        elide: Text.ElideRight
+      }
+    }
   }
 
   // A wide track with faint ticks at the quarter marks, so the fill reads
@@ -1116,8 +1344,14 @@ Panel {
           CheckpointMeter {
             anchors.verticalCenter: parent.verticalCenter
             width: Style.space(48)
-            value: root.providerPercent(providerGroup.modelData)
-            secondaryValue: root.providerSecondaryPercent(providerGroup.modelData)
+            value: {
+              var percent = root.providerPercent(providerGroup.modelData)
+              return percent >= 0 ? root.displayPercent(percent) : -1
+            }
+            secondaryValue: {
+              var percent = root.providerSecondaryPercent(providerGroup.modelData)
+              return percent >= 0 ? root.displayPercent(percent) : -1
+            }
             severity: root.providerWorstSeverity(providerGroup.modelData)
             visible: root.providerSettingLabelMode(providerGroup.modelData.providerId) === "full"
               && root.providerPercent(providerGroup.modelData) >= 0
@@ -1146,13 +1380,19 @@ Panel {
           text: ""
           labelVisible: false
           onPressed: function(buttonCode) {
-            if (buttonCode === Qt.RightButton) root.launchAgent()
+            if (buttonCode === Qt.RightButton)
+              root.launchAgent(providerGroup.modelData ? providerGroup.modelData.providerId : "")
             else if (buttonCode === Qt.MiddleButton) {
               if (usage.cycleBarProviders.length > 0) usage.cycleNext()
               else root.selectProvider(root.providerIndex + 1)
             }
             else root.openProvider(providerGroup.modelData)
           }
+          // The bar's own tooltip window, not a PanelToolTip: a QQC2 popup
+          // cannot escape the thin bar window, so multi-line content gets
+          // clipped to one line there. Bar.qml's PopupWindow self-sizes to
+          // the text and renders every line.
+          tooltipText: root.barProviderTooltip(providerGroup.modelData)
         }
       }
     }
@@ -1218,6 +1458,12 @@ Panel {
     // but making the default popup short turned even ordinary mouse-wheel
     // scrolling into needless work.
     contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(660))
+    // KeyboardPanel derives the card origin from this height. Details reveal
+    // several sections at once, so let the card settle to its new anchor over
+    // one short transition instead of visibly snapping as each binding lands.
+    Behavior on contentHeight {
+      NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+    }
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -1627,7 +1873,7 @@ Panel {
 
           // ---------- Balance / limits ----------
           PanelSeparator {
-            visible: balanceSection.visible || limitsSection.visible || detailModelSection.visible
+            visible: balanceSection.visible || limitsSection.visible || detailModelSection.visible || costSection.visible
             foreground: root.foreground
           }
 
@@ -1746,9 +1992,9 @@ Panel {
           }
 
           // ---------- Token usage by model ----------
-          // Details starts with the useful accounting view. Keep it tied to
-          // the selected provider so the optional API price on each row cannot
-          // accidentally be read as a total for every subscription at once.
+          // Details starts with the useful accounting view. Price information
+          // lives in the analytics card below, so this table stays about the
+          // provider's actual recorded token use and never repeats a cost.
           BorderSurface {
             id: detailModelSection
             visible: root.expanded && root.detailModels.length > 0
@@ -1774,16 +2020,6 @@ Panel {
                 fontFamily: root.fontFamily
               }
 
-              Text {
-                visible: root.costHasModelBreakdown
-                width: parent.width
-                text: "API USD is a published-rate estimate, not subscription billing."
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                wrapMode: Text.WordWrap
-              }
-
               Item {
                 width: parent.width
                 implicitHeight: modelHeading.implicitHeight
@@ -1805,22 +2041,8 @@ Panel {
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                   font.bold: true
-                  anchors.right: root.costHasModelBreakdown ? modelHeadingCost.left : parent.right
-                  anchors.rightMargin: root.costHasModelBreakdown ? Style.space(10) : Style.space(8)
-                  anchors.verticalCenter: parent.verticalCenter
-                }
-
-                Text {
-                  id: modelHeadingCost
-                  visible: root.costHasModelBreakdown
-                  width: Style.space(70)
-                  text: "API USD"
-                  color: root.dim
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.bold: true
-                  horizontalAlignment: Text.AlignRight
                   anchors.right: parent.right
+                  anchors.rightMargin: Style.space(8)
                   anchors.verticalCenter: parent.verticalCenter
                 }
               }
@@ -1833,18 +2055,533 @@ Panel {
                   width: detailModelContent.width
                   row: modelData
                   share: modelData.total / Math.max(1, root.detailModels[0].total)
-                  apiCost: root.apiCostForModel(modelData)
                 }
               }
+            }
+          }
 
-              Text {
-                visible: root.costHasModelBreakdown && root.cost.incomplete
-                width: parent.width
-                text: root.unpricedModelText(root.cost)
-                color: root.warn
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                wrapMode: Text.WordWrap
+          // ---------- Plan vs API (Details only) ----------------------------
+          // Keep the accounting question in one place: what the provider says
+          // was used on the plan/credit ledger, and what the same local token
+          // usage would cost at published API rates. The second number is an
+          // equivalent, never an invoice or a subscription price.
+          Column {
+            id: costSection
+            visible: root.expanded && !root.settingsOpen
+              && root.costProviderRows.length > 0
+            width: parent.width
+            spacing: Style.space(10)
+
+            BorderSurface {
+              id: costProviderOverview
+              visible: root.costProviderRows.length > 0
+              width: parent.width
+              implicitHeight: providerOverviewContent.implicitHeight + Style.space(28)
+              color: root.alpha(root.foreground, 0.035)
+              borderSpec: Border.flat(root.alpha(root.foreground, 0.12), 1)
+              radius: Style.cornerRadius
+
+              Column {
+                id: providerOverviewContent
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: Style.space(14)
+                anchors.rightMargin: Style.space(14)
+                spacing: Style.space(8)
+
+                PanelSectionHeader {
+                  width: parent.width
+                  text: "Plan vs API"
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                }
+
+                Text {
+                  width: parent.width
+                  text: "On plan/credit versus published API-rate equivalent"
+                  textFormat: Text.PlainText
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+
+                Item {
+                  width: parent.width
+                  implicitHeight: providerTableHeading.implicitHeight
+
+                  Text {
+                    id: providerTableHeading
+                    text: "PROVIDER"
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+
+                  Text {
+                    text: "ON PLAN / CREDIT"
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                    horizontalAlignment: Text.AlignRight
+                    anchors.right: providerApiColumn.left
+                    anchors.rightMargin: Style.space(10)
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Style.space(94)
+                  }
+
+                  Text {
+                    id: providerApiColumn
+                    text: "IF API"
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                    horizontalAlignment: Text.AlignRight
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Style.space(78)
+                  }
+                }
+
+                Repeater {
+                  model: root.costProviderRows
+
+                  Item {
+                    id: providerCostRow
+                    required property var modelData
+                    width: providerOverviewContent.width
+                    height: Style.space(50)
+
+                    Rectangle {
+                      anchors.fill: parent
+                      radius: Style.cornerRadius
+                      color: root.provider && root.provider.providerId === providerCostRow.modelData.providerId
+                        ? root.alpha(Color.accent, 0.10) : "transparent"
+                    }
+
+                    Text {
+                      id: providerCostName
+                      text: String(providerCostRow.modelData.providerName || "Provider")
+                      textFormat: Text.PlainText
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                      font.bold: true
+                      elide: Text.ElideRight
+                      anchors.left: parent.left
+                      anchors.right: providerCostPlanValue.left
+                      anchors.rightMargin: Style.space(8)
+                      anchors.top: parent.top
+                      anchors.topMargin: Style.space(4)
+                    }
+
+                    Text {
+                      id: providerCostHint
+                      text: root.costPlanHint(providerCostRow.modelData)
+                      textFormat: Text.PlainText
+                      color: root.dim
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      elide: Text.ElideRight
+                      anchors.right: providerCostPlanValue.left
+                      anchors.rightMargin: Style.space(8)
+                      anchors.left: parent.left
+                      anchors.top: providerCostName.bottom
+                      anchors.topMargin: Style.space(1)
+                    }
+
+                    Text {
+                      id: providerCostPlanValue
+                      width: Style.space(94)
+                      text: root.costPlanValue(providerCostRow.modelData)
+                      textFormat: Text.PlainText
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                      font.bold: true
+                      horizontalAlignment: Text.AlignRight
+                      anchors.right: providerCostApiValue.left
+                      anchors.rightMargin: Style.space(10)
+                      anchors.top: parent.top
+                      anchors.topMargin: Style.space(4)
+                    }
+
+                    Text {
+                      id: providerCostApiValue
+                      width: Style.space(78)
+                      text: root.costApiValue(providerCostRow.modelData)
+                      textFormat: Text.PlainText
+                      color: providerCostRow.modelData.hasCost ? root.foreground : root.dim
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                      font.bold: providerCostRow.modelData.hasCost
+                      horizontalAlignment: Text.AlignRight
+                      anchors.right: parent.right
+                      anchors.top: parent.top
+                      anchors.topMargin: Style.space(4)
+                    }
+
+                    Rectangle {
+                      id: providerUsageTrack
+                      visible: Number(providerCostRow.modelData.usagePercent) >= 0
+                      anchors.left: parent.left
+                      anchors.right: parent.right
+                      anchors.bottom: parent.bottom
+                      height: Math.max(Style.space(3), Math.round(Style.spacing.controlHeight * 0.10))
+                      radius: height / 2
+                      color: root.track
+                    }
+
+                    Rectangle {
+                      anchors.left: providerUsageTrack.left
+                      anchors.verticalCenter: providerUsageTrack.verticalCenter
+                      width: providerUsageTrack.width * root.clamp(Number(providerCostRow.modelData.usagePercent || 0), 0, 1)
+                      height: providerUsageTrack.height
+                      radius: providerUsageTrack.radius
+                      color: root.provider && root.provider.providerId === providerCostRow.modelData.providerId
+                        ? root.foreground : Color.accent
+                    }
+                  }
+                }
+              }
+            }
+
+            BorderSurface {
+              id: costValueCard
+              visible: !!root.provider
+              width: parent.width
+              implicitHeight: costValueContent.implicitHeight + Style.space(28)
+              color: root.alpha(root.foreground, 0.035)
+              borderSpec: Border.flat(root.alpha(root.foreground, 0.12), 1)
+              radius: Style.cornerRadius
+
+              Column {
+                id: costValueContent
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: Style.space(14)
+                anchors.rightMargin: Style.space(14)
+                spacing: Style.space(10)
+
+                PanelSectionHeader {
+                  width: parent.width
+                  text: "Plan vs API" + (root.cost && root.cost.period ? " · " + root.cost.period : "")
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                }
+
+                Text {
+                  // The "not a bill" disclaimer is already implied by the "If
+                  // billed by API" metric label below, so it's only worth a
+                  // full line here when there's something actionable to say:
+                  // a partial estimate, or no priced data at all.
+                  id: costDisclosure
+                  visible: !!root.provider && (!root.cost || root.cost.incomplete)
+                  width: parent.width
+                  text: root.cost
+                    ? "Partial estimate · " + root.unpricedModelText(root.cost)
+                    : "No priced token total for this provider yet."
+                  textFormat: Text.PlainText
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+
+                Row {
+                  id: costMetrics
+                  width: parent.width
+                  spacing: Style.space(8)
+
+                  CostMetric {
+                    width: (costMetrics.width - costMetrics.spacing * 2) / 3
+                    valueText: root.costPlanValue(root.costProviderRow(root.provider))
+                    label: root.costPlanLabel(root.costProviderRow(root.provider))
+                    hint: root.costPlanHint(root.costProviderRow(root.provider))
+                  }
+
+                  CostMetric {
+                    width: (costMetrics.width - costMetrics.spacing * 2) / 3
+                    valueText: root.cost ? root.formatUsd(root.cost.estimateUsd) : "—"
+                    label: "If billed by API"
+                    hint: root.costApiHint(root.costProviderRow(root.provider))
+                  }
+
+                  CostMetric {
+                    width: (costMetrics.width - costMetrics.spacing * 2) / 3
+                    valueText: root.costSummary && root.costSummary.hasDailyAverage
+                      ? root.formatUsd(root.costSummary.averageDailyUsd) : "—"
+                    label: "Avg / recorded day"
+                    hint: root.costSummary && root.costSummary.hasDailyAverage
+                      ? root.costSummary.averageDailyDays + " recorded days" : "No day count"
+                  }
+                }
+
+                Column {
+                  id: costDailyBlock
+                  visible: !!root.cost && root.costDailyRows.length > 0
+                  width: parent.width
+                  spacing: Style.space(6)
+
+                  PanelSectionHeader {
+                    width: parent.width
+                    text: "API equivalent by day"
+                    foreground: root.foreground
+                    fontFamily: root.fontFamily
+                  }
+
+                  Text {
+                    visible: root.costDailyRows.length > 0
+                    width: parent.width
+                    text: root.costSummary
+                      ? root.costDailyRows.length + " recorded days · "
+                        + root.formatUsd(root.costSummary.dailyTotalUsd)
+                        + (root.costSummary.dailySource === "reported" ? " reported" : " derived")
+                      : ""
+                    textFormat: Text.PlainText
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+
+                  Item {
+                    id: costDailyChart
+                    visible: root.costDailyRows.length > 0
+                    width: parent.width
+                    height: Style.space(154)
+
+                    readonly property real axisLeft: Style.space(48)
+                    readonly property real axisRight: Style.space(8)
+                    readonly property real axisTop: Style.space(10)
+                    readonly property real axisBottom: Style.space(24)
+                    readonly property real plotWidth: Math.max(0, width - axisLeft - axisRight)
+                    readonly property real plotHeight: Math.max(0, height - axisTop - axisBottom)
+                    readonly property real peak: root.costSummary
+                      ? Math.max(0, Number(root.costSummary.dailyPeakUsd || 0)) : 0
+
+                    Repeater {
+                      model: [0, 0.5, 1]
+
+                      Item {
+                        required property real modelData
+                        width: costDailyChart.width
+                        height: 1
+                        y: costDailyChart.axisTop
+                          + costDailyChart.plotHeight * (1 - modelData)
+
+                        Text {
+                          width: costDailyChart.axisLeft - Style.space(8)
+                          height: Style.space(14)
+                          y: -height / 2
+                          text: root.formatUsd(costDailyChart.peak * modelData)
+                          textFormat: Text.PlainText
+                          color: root.dim
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.caption
+                          horizontalAlignment: Text.AlignRight
+                          elide: Text.ElideRight
+                        }
+
+                        Rectangle {
+                          x: costDailyChart.axisLeft
+                          width: costDailyChart.plotWidth
+                          height: 1
+                          color: root.alpha(root.foreground, 0.14)
+                        }
+                      }
+                    }
+
+                    Repeater {
+                      model: root.costDailyRows
+
+                      Item {
+                        id: costDayBar
+                        required property var modelData
+                        required property int index
+                        width: costDailyChart.plotWidth / Math.max(1, root.costDailyRows.length)
+                        height: costDailyChart.plotHeight
+                        x: costDailyChart.axisLeft + index * width
+                        y: costDailyChart.axisTop
+
+                        Rectangle {
+                          width: Math.max(3, Math.min(parent.width * 0.66, parent.width - Style.space(4)))
+                          height: Number(costDayBar.modelData.usd || 0) > 0
+                            ? Math.max(2, parent.height * Math.min(1,
+                              Number(costDayBar.modelData.usd || 0) / Math.max(0.0001, costDailyChart.peak)))
+                            : 1
+                          anchors.bottom: parent.bottom
+                          anchors.horizontalCenter: parent.horizontalCenter
+                          radius: Math.min(width / 2, Style.cornerRadius)
+                          color: costDayBar.index === root.costDailyRows.length - 1
+                            ? root.foreground : Color.accent
+                          opacity: costDayBar.index === root.costDailyRows.length - 1 ? 1.0 : 0.78
+                        }
+
+                        MouseArea {
+                          id: costDayHover
+                          anchors.fill: parent
+                          hoverEnabled: true
+                          acceptedButtons: Qt.NoButton
+                        }
+
+                        PanelToolTip {
+                          visible: costDayHover.containsMouse
+                          text: root.shortHistoryDate(costDayBar.modelData.date) + " · "
+                            + root.formatUsd(costDayBar.modelData.usd)
+                          fontFamily: root.fontFamily
+                        }
+                      }
+                    }
+
+                    Row {
+                      id: costDailyLabels
+                      x: costDailyChart.axisLeft
+                      y: costDailyChart.height - height
+                      width: costDailyChart.plotWidth
+                      height: Style.space(16)
+
+                      Repeater {
+                        model: root.costDailyRows
+
+                        Text {
+                          required property var modelData
+                          required property int index
+                          width: costDailyLabels.width / Math.max(1, root.costDailyRows.length)
+                          visible: index === 0 || index === root.costDailyRows.length - 1
+                            || (root.costDailyRows.length > 2
+                              && index === Math.floor((root.costDailyRows.length - 1) / 2))
+                          text: root.shortHistoryDate(modelData.date)
+                          textFormat: Text.PlainText
+                          color: index === root.costDailyRows.length - 1 ? root.foreground : root.dim
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.caption
+                          horizontalAlignment: Text.AlignHCenter
+                          elide: Text.ElideRight
+                        }
+                      }
+                    }
+                  }
+                }
+
+                Column {
+                  id: costModelChart
+                  visible: root.costModelRows.length > 0
+                  width: parent.width
+                  spacing: Style.space(6)
+
+                  PanelSectionHeader {
+                    width: parent.width
+                    text: "API equivalent by model"
+                    foreground: root.foreground
+                    fontFamily: root.fontFamily
+                  }
+
+                  Repeater {
+                    model: root.costModelRows
+
+                    Item {
+                      id: costModelRow
+                      required property var modelData
+                      width: costModelChart.width
+                      height: Style.space(38)
+
+                      Text {
+                        id: costModelName
+                        text: usage.friendlyModelName(costModelRow.modelData.model)
+                        textFormat: Text.PlainText
+                        color: root.foreground
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: true
+                        elide: Text.ElideRight
+                        anchors.left: parent.left
+                        anchors.right: costModelValue.left
+                        anchors.rightMargin: Style.space(8)
+                        anchors.verticalCenter: parent.verticalCenter
+                      }
+
+                      Text {
+                        id: costModelValue
+                        width: Style.space(78)
+                        text: root.formatUsd(costModelRow.modelData.usd)
+                        textFormat: Text.PlainText
+                        color: root.foreground
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: true
+                        horizontalAlignment: Text.AlignRight
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                      }
+
+                      Rectangle {
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.bottom: parent.bottom
+                        height: Math.max(Style.space(3), Math.round(Style.spacing.controlHeight * 0.10))
+                        radius: height / 2
+                        color: root.track
+                      }
+
+                      Rectangle {
+                        anchors.left: parent.left
+                        anchors.bottom: parent.bottom
+                        width: parent.width * root.clamp(Number(costModelRow.modelData.share || 0), 0, 1)
+                        height: Math.max(Style.space(3), Math.round(Style.spacing.controlHeight * 0.10))
+                        radius: height / 2
+                        color: Color.accent
+
+                        Behavior on width {
+                          NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+                        }
+                      }
+
+                    }
+                  }
+                }
+
+                Text {
+                  visible: !!root.cost && root.costModelRows.length === 0
+                  width: parent.width
+                  text: "No model-level API pricing was provided."
+                  textFormat: Text.PlainText
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+
+                Text {
+                  visible: !!root.cost && root.costDailyRows.length === 0
+                    && root.costSummary && root.costSummary.hasDailyAverage
+                  width: parent.width
+                  text: root.costSummary
+                    ? "No day-by-day pricing data · average uses "
+                      + root.costSummary.averageDailyDays + " recorded usage days."
+                    : ""
+                  textFormat: Text.PlainText
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+
+                Text {
+                  visible: text !== ""
+                  width: parent.width
+                  text: root.cost ? root.costFooterText(root.cost, root.costSummary) : ""
+                  textFormat: Text.PlainText
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
               }
             }
           }
@@ -2447,35 +3184,58 @@ Panel {
                 property int draftCycleSlots: usage.barCycleSlots
                 property int draftCycleIntervalSec: usage.barCycleIntervalSec
                 property int draftRefreshIntervalSec: usage.refreshIntervalSec
-                property int draftWarnThresholdPct: root.warnThresholdPct
-                property int draftCriticalThresholdPct: root.criticalThresholdPct
+                property int draftWarnThresholdPct: root.displayWarnThresholdPct
+                property int draftCriticalThresholdPct: root.displayCriticalThresholdPct
+                property bool draftShowsAvailable: usage.showAvailablePercentage
 
                 readonly property bool settingsDirty: draftCycleSlots !== usage.barCycleSlots
                   || draftCycleIntervalSec !== usage.barCycleIntervalSec
                   || draftRefreshIntervalSec !== usage.refreshIntervalSec
-                  || draftWarnThresholdPct !== root.warnThresholdPct
-                  || draftCriticalThresholdPct !== root.criticalThresholdPct
+                  || draftWarnThresholdPct !== root.displayWarnThresholdPct
+                  || draftCriticalThresholdPct !== root.displayCriticalThresholdPct
 
-                // A warn band at or above critical collapses to nothing
-                // meaningful (severityFor's own guard silently favors
-                // critical) — catch it here instead, before Save, where a
-                // person editing the number can actually see why it's stuck.
-                readonly property bool draftThresholdsValid: draftWarnThresholdPct < draftCriticalThresholdPct
+                // In used terms Warn must be below Critical; complementing
+                // both values reverses that ordering in available terms.
+                // Catch either invalid form before Save, where the person
+                // editing the number can see why it is stuck.
+                readonly property bool draftThresholdsValid: draftShowsAvailable
+                  ? draftWarnThresholdPct > draftCriticalThresholdPct
+                  : draftWarnThresholdPct < draftCriticalThresholdPct
 
                 function resyncDrafts() {
                   draftCycleSlots = usage.barCycleSlots
                   draftCycleIntervalSec = usage.barCycleIntervalSec
                   draftRefreshIntervalSec = usage.refreshIntervalSec
-                  draftWarnThresholdPct = root.warnThresholdPct
-                  draftCriticalThresholdPct = root.criticalThresholdPct
+                  draftWarnThresholdPct = root.displayWarnThresholdPct
+                  draftCriticalThresholdPct = root.displayCriticalThresholdPct
+                  draftShowsAvailable = usage.showAvailablePercentage
+                }
+
+                // Preserve every in-progress draft when the presentation mode
+                // changes. Only complement the two threshold fields in place;
+                // resyncDrafts() would incorrectly discard unrelated edits.
+                function syncPercentageMode() {
+                  if (draftShowsAvailable === usage.showAvailablePercentage) return
+                  draftWarnThresholdPct = 100 - draftWarnThresholdPct
+                  draftCriticalThresholdPct = 100 - draftCriticalThresholdPct
+                  draftShowsAvailable = usage.showAvailablePercentage
                 }
 
                 function saveDrafts() {
                   usage.setBarCycleSlots(draftCycleSlots)
                   usage.setBarCycleIntervalSec(draftCycleIntervalSec)
                   usage.setRefreshIntervalSec(draftRefreshIntervalSec)
-                  usage.setWarnThresholdPct(draftWarnThresholdPct)
-                  usage.setCriticalThresholdPct(draftCriticalThresholdPct)
+                  usage.setWarnThresholdPct(draftShowsAvailable
+                    ? 100 - draftWarnThresholdPct : draftWarnThresholdPct)
+                  usage.setCriticalThresholdPct(draftShowsAvailable
+                    ? 100 - draftCriticalThresholdPct : draftCriticalThresholdPct)
+                }
+
+                Connections {
+                  target: usage
+                  function onShowAvailablePercentageChanged() {
+                    behaviourContent.syncPercentageMode()
+                  }
                 }
 
                 Text {
@@ -2541,7 +3301,7 @@ Panel {
 
                   NumberField {
                     width: behaviourGrid.cellWidth
-                    label: "Warn (%)"
+                    label: behaviourContent.draftShowsAvailable ? "Warn avail. (%)" : "Warn used (%)"
                     value: behaviourContent.draftWarnThresholdPct
                     from: 1
                     to: 99
@@ -2554,10 +3314,10 @@ Panel {
 
                   NumberField {
                     width: behaviourGrid.cellWidth
-                    label: "Critical (%)"
+                    label: behaviourContent.draftShowsAvailable ? "Critical avail. (%)" : "Critical used (%)"
                     value: behaviourContent.draftCriticalThresholdPct
-                    from: 1
-                    to: 100
+                    from: behaviourContent.draftShowsAvailable ? 0 : 1
+                    to: behaviourContent.draftShowsAvailable ? 99 : 100
                     stepSize: 1
                     foreground: root.foreground
                     accent: root.urgent
@@ -2572,8 +3332,12 @@ Panel {
                   // between the normal hint and the validation error so nothing
                   // below it jumps when Warn/Critical cross each other.
                   text: behaviourContent.draftThresholdsValid
-                    ? "Warn colors the meter early; Critical marks it urgent. Type an exact value or use the arrows, then Save applies all five fields above together."
-                    : "Warn must be lower than Critical — Save is disabled until that's fixed."
+                    ? (behaviourContent.draftShowsAvailable
+                      ? "Warn when available quota falls this low; Critical marks the lower urgent level. Type an exact value or use the arrows, then Save applies all five fields above together."
+                      : "Warn colors the meter early; Critical marks it urgent. Type an exact value or use the arrows, then Save applies all five fields above together.")
+                    : (behaviourContent.draftShowsAvailable
+                      ? "Warn availability must be higher than Critical — Save is disabled until that's fixed."
+                      : "Warn usage must be lower than Critical — Save is disabled until that's fixed.")
                   color: behaviourContent.draftThresholdsValid ? root.dim : root.urgent
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
@@ -2611,40 +3375,111 @@ Panel {
                   }
                 }
 
-                // Notifications (opt-in, off by default) — a single
-                // system notification the moment a provider first crosses
-                // Warn or Critical, not a repeat every refresh. See
-                // checkThresholdNotifications() in this file.
-                Row {
-                  spacing: Style.space(10)
+                // Keep every immediate preference on one visible row. Adding
+                // another toggle must not make Settings taller or introduce
+                // scrolling; each cell stays comfortably within the wide
+                // settings panel.
+                Grid {
+                  id: preferenceGrid
+                  width: parent.width
+                  columns: 3
+                  columnSpacing: Style.space(12)
+                  readonly property real cellWidth: Math.floor((width - columnSpacing * 2) / 3)
 
-                  ToggleSwitch {
-                    anchors.verticalCenter: parent.verticalCenter
-                    checked: usage.notificationsEnabled
-                    foreground: root.foreground
-                    accent: Color.accent
-                    onToggled: usage.setNotificationsEnabled(!usage.notificationsEnabled)
+                  Row {
+                    width: preferenceGrid.cellWidth
+                    spacing: Style.space(10)
+
+                    ToggleSwitch {
+                      anchors.verticalCenter: parent.verticalCenter
+                      checked: usage.showAvailablePercentage
+                      foreground: root.foreground
+                      accent: Color.accent
+                      onToggled: usage.setShowAvailablePercentage(!usage.showAvailablePercentage)
+                    }
+
+                    Text {
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: "Show available quota"
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                    }
                   }
 
-                  Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "Notify when a provider crosses Warn or Critical"
-                    color: root.foreground
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
+                  Row {
+                    width: preferenceGrid.cellWidth
+                    spacing: Style.space(6)
+
+                    ToggleSwitch {
+                      anchors.verticalCenter: parent.verticalCenter
+                      checked: usage.colorfulUsageMeters
+                      foreground: root.foreground
+                      accent: Color.accent
+                      onToggled: usage.setColorfulUsageMeters(!usage.colorfulUsageMeters)
+                    }
+
+                    Text {
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: "Color-code meters"
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                    }
                   }
 
-                  Button {
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "Test"
-                    tooltipText: "Send one notification now, to confirm your system shows it — independent of the toggle above."
-                    bordered: true
-                    foreground: root.foreground
-                    fontFamily: root.fontFamily
-                    fontSize: Style.font.caption
-                    verticalPadding: Style.space(4)
-                    onClicked: root.sendTestNotification()
+                  // Notifications are opt-in and fire once at each threshold,
+                  // not on every refresh. Test remains independent of the
+                  // toggle and reports its process result beside the button.
+                  Row {
+                    width: preferenceGrid.cellWidth
+                    spacing: Style.space(6)
+
+                    ToggleSwitch {
+                      anchors.verticalCenter: parent.verticalCenter
+                      checked: usage.notificationsEnabled
+                      foreground: root.foreground
+                      accent: Color.accent
+                      onToggled: usage.setNotificationsEnabled(!usage.notificationsEnabled)
+                    }
+
+                    Text {
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: "Threshold alerts"
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                    }
+
+                    Button {
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: "Test"
+                      tooltipText: "Send one notification now — independent of the notification toggle."
+                      bordered: true
+                      foreground: root.foreground
+                      fontFamily: root.fontFamily
+                      fontSize: Style.font.caption
+                      verticalPadding: Style.space(4)
+                      onClicked: root.sendTestNotification()
+                    }
+
+                    Text {
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: root.notificationTestStatus
+                      color: text === "Failed" ? root.urgent : root.dim
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                    }
                   }
+                }
+
+                Text {
+                  width: parent.width
+                  text: "Available mode switches percentages, meters, and warning values together. Meter colors are optional; alerts remain opt-in."
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
                 }
               }
             }
@@ -2702,7 +3537,7 @@ Panel {
       Text {
         id: limitValue
         text: limitRow.window && limitRow.window.percent >= 0
-          ? Format.formatPercent(limitRow.window.percent)
+          ? Format.formatPercent(limitRow.window.percent, usage.showAvailablePercentage)
           : "n/a"
         color: root.foreground
         font.family: root.fontFamily
@@ -2714,7 +3549,8 @@ Panel {
 
     Meter {
       width: parent.width
-      value: limitRow.window ? limitRow.window.percent : -1
+      value: limitRow.window && limitRow.window.percent >= 0
+        ? root.displayPercent(limitRow.window.percent) : -1
       severity: limitRow.severity
     }
 
@@ -2853,7 +3689,6 @@ Panel {
     id: modelRow
     property var row: null
     property real share: 0
-    property var apiCost: null
 
     implicitHeight: modelName.implicitHeight + Style.spacing.lg
 
@@ -2892,30 +3727,14 @@ Panel {
     }
 
     Text {
-      id: modelCost
-      visible: root.costHasModelBreakdown
-      width: Style.space(70)
-      text: modelRow.apiCost !== null && modelRow.apiCost !== undefined
-        ? root.formatUsd(modelRow.apiCost) : "n/a"
-      textFormat: Text.PlainText
-      color: root.dim
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.caption
-      horizontalAlignment: Text.AlignRight
-      anchors.right: parent.right
-      anchors.rightMargin: Style.space(8)
-      anchors.verticalCenter: parent.verticalCenter
-    }
-
-    Text {
       id: modelTokens
       text: modelRow.row ? usage.formatTokenCount(modelRow.row.total) : ""
       color: root.dim
       font.family: root.fontFamily
       font.pixelSize: Style.font.bodySmall
       font.bold: true
-      anchors.right: modelCost.visible ? modelCost.left : parent.right
-      anchors.rightMargin: modelCost.visible ? Style.space(10) : Style.space(8)
+      anchors.right: parent.right
+      anchors.rightMargin: Style.space(8)
       anchors.verticalCenter: parent.verticalCenter
     }
 
