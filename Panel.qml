@@ -8,6 +8,7 @@ import "logic/thresholds.js" as Thresholds
 import "logic/format.js" as Format
 import "logic/aggregate.js" as Aggregate
 import "logic/history.js" as History
+import "logic/agents.js" as Agents
 import "logic/pace.js" as Pace
 import "logic/cost-analytics.js" as CostAnalytics
 import "logic/notifications.js" as Notify
@@ -340,8 +341,12 @@ Panel {
     usage.refreshAll(true)
   }
 
-  function launchAgent() {
-    if (root.bar) root.bar.run("omarchy-agent --pick")
+  // Right-click launches the agent of the mark that was clicked. Passing no
+  // id (the whole-slot button, the overflow button) keeps the old behavior:
+  // omarchy-agent reads ~/.config/omarchy/defaults/agent, which is the only
+  // sensible answer when the click doesn't name a provider.
+  function launchAgent(providerId) {
+    if (root.bar) root.bar.run(Agents.launchCommandFor(providerId))
     root.close()
   }
 
@@ -1359,7 +1364,8 @@ Panel {
           text: ""
           labelVisible: false
           onPressed: function(buttonCode) {
-            if (buttonCode === Qt.RightButton) root.launchAgent()
+            if (buttonCode === Qt.RightButton)
+              root.launchAgent(providerGroup.modelData ? providerGroup.modelData.providerId : "")
             else if (buttonCode === Qt.MiddleButton) {
               if (usage.cycleBarProviders.length > 0) usage.cycleNext()
               else root.selectProvider(root.providerIndex + 1)
