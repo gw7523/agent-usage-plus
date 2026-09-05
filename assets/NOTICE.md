@@ -21,6 +21,12 @@ variant convention (near-white `#F1ECEC` on dark surfaces, near-black
 no-ops over the full viewBox and have been removed; the mark paths are
 unchanged.
 
+`grok.svg`/`grok-light.svg` use xAI's Grok product mark from
+[lobe-icons](https://github.com/lobehub/lobe-icons) under its MIT license,
+recolored into this project's existing white/`#111111` dark/light scheme.
+
+Copyright © 2023 LobeHub.
+
 Copyright (c) 2026 Peter Steinberger
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
