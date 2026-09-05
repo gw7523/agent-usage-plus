@@ -63,11 +63,20 @@ function notificationTransition(previousSeverity, currentSeverity) {
   }
 }
 
+// The stricter of two severities — for collapsing several meters (every
+// limit window plus a credit gauge) into one chip-level state.
+function worstSeverity(a, b) {
+  var left = normaliseSeverity(a)
+  var right = normaliseSeverity(b)
+  return SEVERITY_RANK[right] > SEVERITY_RANK[left] ? right : left
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     DEFAULT_WARN_PCT: DEFAULT_WARN_PCT,
     DEFAULT_CRITICAL_PCT: DEFAULT_CRITICAL_PCT,
     severityFor: severityFor,
+    worstSeverity: worstSeverity,
     notificationTransition: notificationTransition
   }
 }

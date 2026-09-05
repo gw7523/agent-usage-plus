@@ -910,6 +910,22 @@ Panel {
     return -1
   }
   function providerSeverity(p) { return root.severityForPercent(providerPercent(p)) }
+
+  // The chip must warn when ANY of the account's meters is hot, not just
+  // the primary window the bar happens to display: a session at 1% can sit
+  // in front of a model-scoped weekly at 86% — exactly the account most
+  // worth warning about. Worst of every limit window plus the credit gauge.
+  function providerWorstSeverity(p) {
+    if (!p) return "ok"
+    var worst = "ok"
+    var windows = limitWindows(p)
+    for (var i = 0; i < windows.length; i++)
+      worst = Thresholds.worstSeverity(worst, severityForPercent(windows[i].percent))
+    var credit = p.balance || null
+    if (credit && Number(credit.funded) > 0 && Number(credit.remaining) >= 0)
+      worst = Thresholds.worstSeverity(worst, severityForPercent(1 - Number(credit.remaining) / Number(credit.funded)))
+    return worst
+  }
   function providerPercentText(p) {
     var pct = providerPercent(p)
     return pct >= 0 ? Format.formatPercent(pct, usage.showAvailablePercentage) : "…"
@@ -1337,7 +1353,7 @@ Panel {
               var percent = root.providerSecondaryPercent(providerGroup.modelData)
               return percent >= 0 ? root.displayPercent(percent) : -1
             }
-            severity: root.providerSeverity(providerGroup.modelData)
+            severity: root.providerWorstSeverity(providerGroup.modelData)
             visible: root.providerSettingLabelMode(providerGroup.modelData.providerId) === "full"
               && root.providerPercent(providerGroup.modelData) >= 0
           }
@@ -1346,7 +1362,7 @@ Panel {
             anchors.verticalCenter: parent.verticalCenter
             visible: root.providerSettingLabelMode(providerGroup.modelData.providerId) !== "icon"
             text: root.providerPercentText(providerGroup.modelData)
-            color: root.foreground
+            color: root.colorForSeverity(root.providerWorstSeverity(providerGroup.modelData))
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
           }
