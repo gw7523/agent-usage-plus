@@ -167,6 +167,7 @@ balance.
 {
   "estimateUsd": 12.43,
   "period": "30d",
+  "activeDays": 12,
   "byModel": [
     { "model": "claude-sonnet-5", "usd": 8.10, "tokens": 540000000 }
   ],
@@ -187,9 +188,9 @@ would have cost billed à la carte.
 your collector computes by multiplying token counts by a price list you
 maintain yourself; it is never read from an actual invoice or billing
 API for a rate-limited plan (if it were, you'd be reporting `balance`
-instead). The panel labels this figure as an estimate wherever it's shown,
-and your collector should do the same anywhere else it surfaces the
-number — never present it as "this is what you were charged."
+instead). The panel labels this figure as an "If billed by API" equivalent
+wherever it's shown, and your collector should do the same anywhere else it
+surfaces the number — never present it as "this is what you were charged."
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
@@ -199,6 +200,7 @@ number — never present it as "this is what you were charged."
 | `incomplete` | boolean | no | `true` only when this is a partial subtotal: at least one used model has no published API rate. The panel labels it **partial** and names the excluded models. |
 | `unknownModels` | array of strings | required when `incomplete` | Model ids excluded from the subtotal because no exact price is known. Capped at 20 for display. |
 | `pricedTokens` / `unpricedTokens` | integers, ≥ 0 | no | Auditable token coverage for a partial subtotal. |
+| `activeDays` | integer, ≥ 0 | no | Number of distinct recorded usage days covered by the aggregate estimate. Used only to calculate an average when `byDay` is unavailable; it is not a subscription quota. |
 | `byModel` | array of `{ "model": string, "usd": number, "tokens": integer }` | no | Per-model breakdown of the same estimate. Capped at 100 entries; a negative `usd` reads as `0`. |
 | `byDay` | array of `{ "date": "YYYY-MM-DD", "usd": number }` | no | Per-day breakdown of the same estimate, meant to line up with `recentDays`. Capped at 31 entries; a negative `usd` reads as `0`. |
 
@@ -206,12 +208,19 @@ Like `limits` and `balance`, `cost` is per-account and is never merged or
 summed across synced devices — the panel always reads it straight off the
 selected device's own record.
 
-The panel already renders an "Est. API cost" row whenever a record includes
-a valid `cost` block, and renders nothing extra when it is absent. A
-collector that computes it must identify the price-list version/source in
-its own documentation and must never present the estimate as a provider
-invoice. The supported companion collectors package lives in this repository
-now; third-party collectors remain welcome too — see `CONTRIBUTING.md`.
+The expanded Details view separates three different facts for every enabled
+provider: the provider's subscription quota (`limits`), a real prepaid API
+ledger (`balance`), and the optional published-rate equivalent (`cost`). The
+compact view renders none of this derived accounting. A missing `cost` is
+shown as unavailable, never as `$0`; that means the provider did not expose
+enough model/token data for an honest API equivalent. `byModel` powers the
+model bars and `byDay`, when present, powers the daily chart. If `byDay` is
+absent, `activeDays` supports an explicitly labelled recorded-day average
+instead of a fabricated daily series. A collector that computes `cost` must
+identify the price-list version/source in its own documentation and must never
+present the estimate as a provider invoice. The supported companion collectors
+package lives in this repository now; third-party collectors remain welcome
+too — see `CONTRIBUTING.md`.
 
 The reusable, versioned estimator is [`logic/cost.js`](../logic/cost.js),
 with its official-rate catalogue in

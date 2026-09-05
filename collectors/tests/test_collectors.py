@@ -291,6 +291,7 @@ class CollectorParsingTests(unittest.TestCase):
     def test_transcript_cost_decorator_uses_complete_known_model_pricing(self) -> None:
         record = decorate({
             "id": "claude",
+            "activeDays": 4,
             "modelUsage": {
                 "claude-sonnet-5": {
                     "inputTokens": 1_000_000,
@@ -301,6 +302,7 @@ class CollectorParsingTests(unittest.TestCase):
             },
         }, "claude", "Local transcript history")
         self.assertEqual(record["cost"]["estimateUsd"], 14.7)
+        self.assertEqual(record["cost"]["activeDays"], 4)
 
     def test_transcript_cost_decorator_labels_a_partial_unknown_model_total(self) -> None:
         record = decorate({

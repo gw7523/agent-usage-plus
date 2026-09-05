@@ -21,6 +21,23 @@ The coloured card shows the provider status in its heading and the collector's n
 
 For another provider, follow the card's collector-supplied help text. A collector should use the `auth-missing` and `endpoint-down` conventions in [collector-contract.md](collector-contract.md), so its panel state names both the problem and how to resolve it.
 
+## Understanding Plan vs API
+
+The expanded Details view keeps the accounting labels separate:
+
+- **On subscription** is the provider-reported quota percentage and reset
+  window. It is not converted into fake dollar credits.
+- **API credit left** is the real prepaid balance returned by a provider such
+  as OpenRouter, DeepSeek, or xAI; when the provider reports funded/spent
+  values, the hint shows both.
+- **If billed by API** is a published-rate equivalent of recorded tokens. It
+  is available only when exact model/token pricing exists for that provider;
+  `—` means the data was not provided, not that the cost was zero.
+
+`Avg / recorded day` is the estimate divided by the collector's distinct
+active days when no per-day price matrix is available. The panel labels that
+fallback instead of drawing made-up daily bars.
+
 ## A provider is missing
 
 Check the three deliberately different visibility states:
@@ -54,7 +71,17 @@ Without that amount, the balance section is intentionally omitted rather than pr
 
 ## Cost estimate is absent or differs from a bill
 
-`EST. API COST` appears only when the collector supplies a `cost` block. It is a token-derived estimate at the collector's published API price list, not an invoice, subscription charge, tax calculation, or account balance. Check the selected provider and record timestamp before comparing it with a vendor bill; cached reads, non-token charges, or a changed price list can differ.
+`Plan vs API` appears in Details only. It compares the provider's real
+subscription quota or prepaid API balance with a token-derived published-rate
+equivalent; compact view intentionally stays focused on subscription status.
+The equivalent is not an invoice, subscription charge, tax calculation, or
+account balance. A provider shows `—` when it has no exact model/token pricing,
+not when its cost is zero. Check the selected provider and record timestamp
+before comparing it with a vendor bill; cached reads, non-token charges, or a
+changed price list can differ. A partial estimate names the models excluded
+from the subtotal once, in neutral text. When `byDay` is absent, `Avg /
+recorded day` is the total divided by the collector's reported active days; no
+synthetic daily bars are drawn.
 
 ## The panel looks unchanged after editing QML
 

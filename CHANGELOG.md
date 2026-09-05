@@ -18,6 +18,22 @@ All notable changes to this project are documented in this file. The format is b
   Sanitized like a provider id, carried through sync snapshots, validated by
   `agent-usage-doctor`, and documented in the collector contract.
 
+### Changed
+
+- Moved estimated API cost out of the compact view and into a Details-only
+  analytics section with provider comparison, price coverage, model spend
+  bars, and an optional daily estimate chart.
+
+### Fixed
+
+- The token-by-model table no longer repeats API prices or displays partial
+  cost warnings in yellow; partial estimates are disclosed once in neutral
+  text without null-binding errors when a collector has no cost data.
+- The Codex collector retries once when the RPC handshake comes back empty
+  (limits unavailable), so a slow version-manager shim (mise, asdf, ...)
+  resolving `codex` no longer reads as "Codex limits unavailable" on an
+  install that is actually authenticated and working.
+
 ## [2.1.0] - 2026-08-28
 
 ### Added
