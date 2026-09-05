@@ -215,15 +215,13 @@ Item {
     if (agentIds) {
       for (var i = 0; i < agentIds.length; i++) updateArgs.push(agentIds[i])
     }
-    // A local updater is optional: this plugin must still refresh on a
-    // normal Omarchy installation where only the packaged command exists.
-    // Prefer the local copy when present because it can carry a compatibility
-    // fix ahead of the distro package (notably the Codex CLI auth-mode fix).
-    var localUpdater = home + "/.local/bin/omarchy-agent-usage-update"
-    var script = 'if [[ -x "$1" ]]; then exec "$1" "${@:2}"; fi; exec omarchy-agent-usage-update "${@:2}"'
+    // The plugin-local dispatcher gives packaged and bundled collectors the
+    // same filters and refresh lifecycle without reading shell.json itself.
+    var scriptUrl = String(Qt.resolvedUrl("collectors/bin/agent-usage-plus-update"))
+    var scriptPath = decodeURIComponent(scriptUrl.replace(/^file:\/\//, ""))
     if (kind === "force") updateArgs.unshift("--force")
     if (kind === "limits") updateArgs.unshift("--limits-only")
-    return ["bash", "-c", script, "agent-usage-update", localUpdater].concat(updateArgs)
+    return ["/bin/bash", scriptPath].concat(updateArgs)
   }
 
   // Wraps the real command so only the first maxUpdateStderrBytes bytes of

@@ -21,6 +21,10 @@ variant convention (near-white `#F1ECEC` on dark surfaces, near-black
 no-ops over the full viewBox and have been removed; the mark paths are
 unchanged.
 
+`devin.svg` uses Lobe Icons' normalized color mark under its MIT license. Its
+three colors are Cognition's published Devin palette; square viewBox padding
+keeps its visible size aligned with the other provider marks at bar scale.
+
 `grok.svg`/`grok-light.svg` use xAI's Grok product mark from
 [lobe-icons](https://github.com/lobehub/lobe-icons) under its MIT license,
 recolored into this project's existing white/`#111111` dark/light scheme.

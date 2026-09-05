@@ -8,6 +8,7 @@ const path = require("node:path")
 const { execFileSync } = require("node:child_process")
 
 const updater = path.join(__dirname, "..", "collectors", "bin", "omarchy-agent-usage-update")
+const pluginUpdater = path.join(__dirname, "..", "collectors", "bin", "agent-usage-plus-update")
 const installer = path.join(__dirname, "..", "collectors", "install.sh")
 
 function executable(file, body) {
@@ -86,4 +87,69 @@ test("compat installer links both the collector and updater", t => {
     fs.realpathSync(path.join(bin, "omarchy-agent-usage-update")),
     path.join(data, "agent-usage-plus-collectors", "bin", "omarchy-agent-usage-update"),
   )
+})
+
+test("plugin updater adds Devin without running every bundled collector", t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-usage-plugin-updater-"))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const base = path.join(root, "base-updater")
+  const bundled = path.join(root, "bundled-runner")
+  const calls = path.join(root, "calls")
+  executable(base, `printf 'base:%s\n' "$*" >>"${calls}"`)
+  executable(bundled, `printf 'bundled:%s\n' "$*" >>"${calls}"`)
+
+  execFileSync("bash", [pluginUpdater, "--force", "devin", "--except", "kimi"], {
+    env: {
+      ...process.env,
+      AGENT_USAGE_PLUS_BASE_UPDATER: base,
+      AGENT_USAGE_PLUS_BUNDLED_RUNNER: bundled,
+    },
+  })
+
+  const lines = fs.readFileSync(calls, "utf8").trim().split("\n")
+  assert.ok(lines.includes("bundled:update --force devin"))
+  const baseCall = lines.find(line => line.startsWith("base:"))
+  assert.equal(baseCall, "base:--force devin --except kimi --except devin")
+})
+
+test("plugin updater reaches the real packaged updater through an installed --codex-cli-compat override, not itself", t => {
+  // Regression for a reviewed-but-unreproduced recursion concern: the
+  // plugin dispatcher's own local_updater auto-detection (no
+  // AGENT_USAGE_PLUS_BASE_UPDATER override, exactly how Main.qml invokes it)
+  // must resolve the installed ~/.local/bin/omarchy-agent-usage-update to the
+  // safe compat wrapper the installer actually links it to, not back into
+  // itself. `install.sh --codex-cli-compat` already targets the wrapper (see
+  // "compat installer links both the collector and updater" above); this
+  // proves the full default-detection chain reaches the real packaged
+  // updater end to end instead of spinning or silently doing nothing.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-usage-e2e-"))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const bin = path.join(root, "bin")
+  const data = path.join(root, "data")
+  const packaged = path.join(root, "packaged-updater")
+  const codex = path.join(root, "codex-collector")
+  const bundled = path.join(root, "bundled-runner")
+  const calls = path.join(root, "calls")
+  executable(packaged, `printf 'packaged:%s\\n' "$*" >>"${calls}"`)
+  executable(codex, `printf 'codex:%s\\n' "$*" >>"${calls}"; printf '%s\\n' '{"id":"codex","ready":true,"limits":[{"percent":0.1}]}'`)
+  executable(bundled, `printf 'bundled:%s\\n' "$*" >>"${calls}"`)
+
+  execFileSync("bash", [installer, "--codex-cli-compat"], {
+    env: { ...process.env, XDG_BIN_HOME: bin, XDG_DATA_HOME: data },
+  })
+
+  execFileSync("bash", [pluginUpdater, "--force"], {
+    env: {
+      ...process.env,
+      XDG_BIN_HOME: bin,
+      XDG_STATE_HOME: path.join(root, "state"),
+      AGENT_USAGE_PLUS_PACKAGED_UPDATER: packaged,
+      AGENT_USAGE_PLUS_CODEX_COLLECTOR: codex,
+      AGENT_USAGE_PLUS_BUNDLED_RUNNER: bundled,
+    },
+  })
+
+  const lines = fs.readFileSync(calls, "utf8").trim().split("\n")
+  assert.ok(lines.includes("packaged:--except codex --force --except devin"))
+  assert.ok(lines.includes("codex:--force"))
 })

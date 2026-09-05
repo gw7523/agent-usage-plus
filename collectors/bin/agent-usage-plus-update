@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -u
+
+# One updater entry point for the widget. Omarchy keeps ownership of its
+# packaged collectors; this plugin handles only the providers it bundles.
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+base_updater=${AGENT_USAGE_PLUS_BASE_UPDATER:-}
+bundled_runner=${AGENT_USAGE_PLUS_BUNDLED_RUNNER:-"$script_dir/agent-usage-plus-collectors"}
+
+if [[ -z $base_updater ]]; then
+  local_updater=${XDG_BIN_HOME:-"$HOME/.local/bin"}/omarchy-agent-usage-update
+  if [[ -x $local_updater ]]; then
+    base_updater=$local_updater
+  else
+    base_updater=/usr/share/omarchy/bin/omarchy-agent-usage-update
+  fi
+fi
+
+flags=()
+only=()
+devin_excluded=false
+args=("$@")
+for ((index = 0; index < ${#args[@]}; index++)); do
+  case ${args[$index]} in
+    --force | --limits-only) flags+=("${args[$index]}") ;;
+    --except)
+      ((index += 1))
+      [[ ${args[$index]:-} == devin ]] && devin_excluded=true
+      ;;
+    *) only+=("${args[$index]}") ;;
+  esac
+done
+
+devin_wanted=true
+if $devin_excluded; then
+  devin_wanted=false
+elif ((${#only[@]} > 0)); then
+  devin_wanted=false
+  for provider in "${only[@]}"; do
+    [[ $provider == devin ]] && devin_wanted=true
+  done
+fi
+
+status=0
+"$base_updater" "$@" --except devin &
+base_pid=$!
+if $devin_wanted; then
+  "$bundled_runner" update "${flags[@]}" devin &
+  bundled_pid=$!
+fi
+
+wait "$base_pid" || status=1
+if [[ -n ${bundled_pid:-} ]]; then
+  wait "$bundled_pid" || status=1
+fi
+exit "$status"

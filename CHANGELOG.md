@@ -6,6 +6,10 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- Devin collector and provider mark: reads local CLI token/session history and
+  the signed-in account's daily/weekly quota without storing another copy of
+  the CLI credential. A plugin-local dispatcher refreshes Devin alongside the
+  packaged providers without activating the other optional collectors.
 - Multi-device sync now has a Settings UI: a toggle and a sync-folder field,
   with live status ("Merged from N devices"). The merge logic already
   existed (`logic/aggregate.js`); it previously required hand-editing
