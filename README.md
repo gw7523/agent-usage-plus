@@ -58,6 +58,24 @@ the same underlying trigger points.
 
 ![Available quota mode in Settings](preview-available.png)
 
+## Multi-device sync
+
+Local providers (Claude Code, Codex) only see the transcripts on the machine
+they run on, so a fresh machine reads as all-zero for today and history until
+it has done some work of its own. To combine usage across every machine you
+use, turn on **Multi-device sync** in the panel's Settings and point it at a
+folder — each machine then writes its own small JSON snapshot into that
+folder and reads every other machine's snapshot from it, summing today's
+tokens and merging the daily history.
+
+The panel never syncs the folder itself — it only reads and writes inside
+one that's already kept identical across your machines by some other tool.
+[Syncthing](https://syncthing.net) is a common, free, no-cloud-required
+choice; a synced Nextcloud/Dropbox folder or a network mount (NFS/SMB/sshfs)
+works just as well. Point every machine's sync folder setting at the same
+path once that folder itself is syncing, and each machine picks up the
+others' numbers on its next refresh.
+
 Details: [collector setup](collectors/README.md),
 [record contract](docs/collector-contract.md), [manual QA](docs/manual-qa.md),
 [troubleshooting](docs/troubleshooting.md), [contributing](CONTRIBUTING.md).

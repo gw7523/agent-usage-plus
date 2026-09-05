@@ -6,6 +6,11 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- Multi-device sync now has a Settings UI: a toggle and a sync-folder field,
+  with live status ("Merged from N devices"). The merge logic already
+  existed (`logic/aggregate.js`); it previously required hand-editing
+  `syncMode`/`syncDir` with `omarchy bar set` from a terminal, so almost
+  nobody could discover or use it. Documented in the README.
 - Optional `brand` record field: a record whose `id` isn't a bundled provider
   id (e.g. a second account like `claude-work`) can declare `"brand":
   "claude"` to render with that provider's mark in the bar and panel. This
