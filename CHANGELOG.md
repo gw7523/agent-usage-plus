@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-09-05
+
 ### Added
 
 - Devin collector and provider mark: reads local CLI token/session history and

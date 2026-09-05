@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.viganogabriele.agent-usage-plus",
   "name": "Agent Usage Plus",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "author": "Gabriele Vigano",
   "license": "MIT",
   "description": "Live AI coding-subscription usage, limits, API-rate estimates, and token history in a native Omarchy bar panel.",
