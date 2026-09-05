@@ -60,7 +60,10 @@ def selected_providers(argv: list[str] | None = None) -> list[str]:
     parser.add_argument("--limits-only", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--except", dest="excluded", action="append", default=[])
     parser.add_argument("providers", metavar="provider", nargs="*")
-    args = parser.parse_args(argv)
+    # The widget dispatcher forwards filters in the same order it received
+    # them.  Python 3.12's parse_args stops collecting positional providers
+    # after --except, whereas parse_intermixed_args supports either order.
+    args = parser.parse_intermixed_args(argv)
     requested = args.providers if args.providers else sorted(COLLECTORS)
     excluded = set(args.excluded)
     return [provider for provider in requested if provider in COLLECTORS and provider not in excluded]
